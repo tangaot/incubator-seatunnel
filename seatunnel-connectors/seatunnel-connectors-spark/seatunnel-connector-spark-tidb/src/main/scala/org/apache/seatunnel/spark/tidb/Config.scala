@@ -14,32 +14,46 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.seatunnel.spark.tidb
 
-package org.apache.seatunnel.spark.redis.common
+/**
+ * Configuration parameters for TiDB source and sink
+ */
+object Config extends Serializable {
 
-object Constants extends Serializable {
+  /**
+   * Address config parameter
+   */
+  val ADDR = "addr"
 
-  final val HOST = "host"
-  final val PORT = "port"
-  final val AUTH = "auth"
-  final val DB_NUM = "db_num"
-  final val KEYS_OR_KEY_PATTERN = "keys_or_key_pattern"
-  final val PARTITION_NUM = "partition_num"
-  final val TIMEOUT = "timeout"
-  final val DATA_TYPE = "data_type"
-  final val HASH_NAME = "hash_name"
-  final val SET_NAME = "set_name"
-  final val ZSET_NAME = "zset_name"
-  final val LIST_NAME = "list_name"
-  final val TTL = "ttl"
+  /**
+   * Port config parameter
+   */
+  val PORT = "port"
 
-  final val DEFAULT_HOST = "localhost"
-  final val DEFAULT_PORT = 6379
-  final val DEFAULT_AUTH = null
-  final val DEFAULT_DB_NUM = 0
-  final val DEFAULT_DATA_TYPE = "KV"
-  final val DEFAULT_PARTITION_NUM = 3
-  final val DEFAULT_TIMEOUT = 2000
-  final val DEFAULT_TTL = 0
+  /**
+   * User config parameter
+   */
+  val USER = "user"
+
+  /**
+   * Password config parameter
+   */
+  val PASSWORD = "password"
+
+  /**
+   * Database config parameter
+   */
+  val DATABASE = "database"
+
+  /**
+   * Table config parameter
+   */
+  val TABLE = "table"
+
+  /**
+   * Pre sql config parameter
+   */
+  val PRE_SQL = "pre_sql"
 
 }
