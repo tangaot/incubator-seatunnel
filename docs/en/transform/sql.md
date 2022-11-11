@@ -1,5 +1,7 @@
 # Sql
 
+> Sql transform plugin
+
 ## Description
 
 Use SQL to process data and support engine's UDF function.
@@ -54,7 +56,6 @@ Use SQL plugin for data aggregation, use avg functions to perform aggregation op
 ```bash
 sql {
     sql = "select avg(age) from user_info",
-    table_name = "user_info"
 }
 ```
 

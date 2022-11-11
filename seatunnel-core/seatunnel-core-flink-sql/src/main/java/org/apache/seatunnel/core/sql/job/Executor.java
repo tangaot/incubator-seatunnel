@@ -23,6 +23,7 @@ import org.apache.seatunnel.common.utils.ReflectionUtils;
 import org.apache.seatunnel.core.sql.classloader.CustomClassLoader;
 import org.apache.seatunnel.core.sql.splitter.SqlStatementSplitter;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.flink.annotation.VisibleForTesting;
@@ -37,14 +38,11 @@ import org.apache.flink.table.factories.Factory;
 import org.apache.flink.table.operations.CatalogSinkModifyOperation;
 import org.apache.flink.table.operations.Operation;
 import org.apache.flink.table.operations.ddl.CreateTableOperation;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.net.MalformedURLException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -53,14 +51,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+@Slf4j
 public class Executor {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(Executor.class);
 
     private static final String FLINK_SQL_SET_MATCHING_REGEX = "SET(\\s+(\\S+)\\s*=(.*))?";
     private static final int FLINK_SQL_SET_OPERANDS = 3;
 
-    private static CustomClassLoader CLASSLOADER = new CustomClassLoader();
+    private static final CustomClassLoader CLASSLOADER = new CustomClassLoader();
 
     private static final String CONNECTOR_IDENTIFIER = "connector";
     private static final String SQL_CONNECTOR_PREFIX = "flink-sql";
@@ -137,21 +134,16 @@ public class Executor {
      * Refer https://github.com/apache/incubator-seatunnel/pull/1850
      */
     private static void loadConnector(String connectorType, Configuration configuration) {
-        Iterator<Factory> factories = ServiceLoader.load(Factory.class, CLASSLOADER).iterator();
-        while (factories.hasNext()) {
-            Factory factory = factories.next();
-
-            /**
-             * Handle for two cases:
-             * 1. Flink built-in connectors.
-             * 2. Connectors have been placed in classpath.
-             */
+        // Handle for two cases:
+        // 1. Flink built-in connectors.
+        // 2. Connectors have been placed in classpath.
+        for (Factory factory : ServiceLoader.load(Factory.class, CLASSLOADER)) {
             if (factory.factoryIdentifier().equals(connectorType)) {
                 return;
             }
         }
 
-        Common.setDeployMode(DeployMode.CLIENT.getName());
+        Common.setDeployMode(DeployMode.CLIENT);
         File connectorDir = Common.connectorJarDir(SQL_CONNECTOR_PREFIX).toFile();
         if (!connectorDir.exists() || connectorDir.listFiles() == null) {
             return;
@@ -162,7 +154,7 @@ public class Executor {
             .collect(Collectors.toList());
 
         if (connectorFiles.size() > 1) {
-            LOGGER.warn("Found more than one connector jars for {}. Only the first one will be loaded.", connectorType);
+            log.warn("Found more than one connector jars for {}. Only the first one will be loaded.", connectorType);
         }
 
         File connectorFile = connectorFiles.size() >= 1 ? connectorFiles.get(0) : null;
@@ -185,7 +177,7 @@ public class Executor {
                 configuration.set(PipelineOptions.JARS, jars);
                 configuration.set(PipelineOptions.CLASSPATHS, classpath);
             } catch (MalformedURLException ignored) {
-                LOGGER.error("Failed to load connector {}. Connector file: {}", connectorType, connectorFile.getAbsolutePath());
+                log.error("Failed to load connector {}. Connector file: {}", connectorType, connectorFile.getAbsolutePath());
             }
         }
     }
@@ -205,7 +197,7 @@ public class Executor {
         return Optional.empty();
     }
 
-    private static Optional<Pair<String, String>> operandConverter(String[] operands){
+    private static Optional<Pair<String, String>> operandConverter(String[] operands) {
         if (operands.length != FLINK_SQL_SET_OPERANDS) {
             return Optional.empty();
         }

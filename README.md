@@ -60,11 +60,13 @@ accustomed to SQL, you can also directly construct a data processing pipeline by
 Currently, the filter list supported by SeaTunnel is still being expanded. Furthermore, you can develop your own data
 processing plug-in, because the whole system is easy to expand.
 
-## Plugins supported by SeaTunnel
+## Connectors supported by SeaTunnel
 
-- Connectors supported [check out](https://seatunnel.apache.org/docs/category/source)
+- Connectors supported [check out](https://seatunnel.apache.org/docs/category/source-v2)
 
 - Transform supported [check out](https://seatunnel.apache.org/docs/transform/common-options/)
+
+### Here's a list of our connectors with their health status.[connector status](docs/en/Connector-v2-release-state.md)
 
 ## Environmental dependency
 
@@ -145,9 +147,11 @@ unacceptable behavior.
 
 ## Developer
 
-Thanks to all developers!
+Thanks to [all developers](https://github.com/apache/incubator-seatunnel/graphs/contributors)!
 
-[![](https://opencollective.com/seatunnel/contributors.svg?width=666)](https://github.com/apache/incubator-seatunnel/graphs/contributors)
+<a href="https://github.com/apache/incubator-seatunnel/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=apache/incubator-seatunnel" />
+</a>
 
 ## Contact Us
 

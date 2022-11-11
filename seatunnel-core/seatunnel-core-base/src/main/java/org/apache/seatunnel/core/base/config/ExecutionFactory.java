@@ -30,21 +30,19 @@ import org.apache.seatunnel.spark.batch.SparkBatchExecution;
 import org.apache.seatunnel.spark.stream.SparkStreamingExecution;
 import org.apache.seatunnel.spark.structuredstream.StructuredStreamingExecution;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Used to create {@link Execution}.
  *
  * @param <ENVIRONMENT> environment type
  */
+@Slf4j
 public class ExecutionFactory<ENVIRONMENT extends RuntimeEnv> {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(ExecutionFactory.class);
+    public AbstractExecutionContext<ENVIRONMENT> executionContext;
 
-    public ExecutionContext<ENVIRONMENT> executionContext;
-
-    public ExecutionFactory(ExecutionContext<ENVIRONMENT> executionContext) {
+    public ExecutionFactory(AbstractExecutionContext<ENVIRONMENT> executionContext) {
         this.executionContext = executionContext;
     }
 
@@ -77,7 +75,7 @@ public class ExecutionFactory<ENVIRONMENT extends RuntimeEnv> {
             default:
                 throw new IllegalArgumentException("No suitable engine");
         }
-        LOGGER.info("current execution is [{}]", execution.getClass().getName());
+        log.info("current execution is [{}]", execution.getClass().getName());
         return (Execution<BaseSource<ENVIRONMENT>, BaseTransform<ENVIRONMENT>, BaseSink<ENVIRONMENT>, ENVIRONMENT>) execution;
     }
 
