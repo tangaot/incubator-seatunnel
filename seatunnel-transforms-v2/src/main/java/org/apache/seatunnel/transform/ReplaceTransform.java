@@ -17,6 +17,10 @@
 
 package org.apache.seatunnel.transform;
 
+import org.apache.seatunnel.shade.com.typesafe.config.Config;
+
+import org.apache.seatunnel.api.configuration.Option;
+import org.apache.seatunnel.api.configuration.Options;
 import org.apache.seatunnel.api.table.type.BasicType;
 import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
@@ -26,18 +30,40 @@ import org.apache.seatunnel.common.config.CheckResult;
 import org.apache.seatunnel.transform.common.SeaTunnelRowAccessor;
 import org.apache.seatunnel.transform.common.SingleFieldOutputTransform;
 
-import org.apache.seatunnel.shade.com.typesafe.config.Config;
-
 import com.google.auto.service.AutoService;
 
 @AutoService(SeaTunnelTransform.class)
 public class ReplaceTransform extends SingleFieldOutputTransform {
 
-    private static final String KEY_REPLACE_FIELD = "replace_field";
-    private static final String KEY_PATTERN = "pattern";
-    private static final String KEY_REPLACEMENT = "replacement";
-    private static final String KEY_IS_REGEX = "is_regex";
-    private static final String KEY_REPLACE_FIRST = "replace_first";
+    public static final Option<String> KEY_REPLACE_FIELD =
+            Options.key("replace_field")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription("The field you want to replace");
+
+    public static final Option<String> KEY_PATTERN =
+            Options.key("pattern")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription("The old string that will be replaced");
+
+    public static final Option<String> KEY_REPLACEMENT =
+            Options.key("replacement")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription("The new string for replace");
+
+    public static final Option<Boolean> KEY_IS_REGEX =
+            Options.key("is_regex")
+                    .booleanType()
+                    .defaultValue(false)
+                    .withDescription("Use regex for string match");
+
+    public static final Option<Boolean> KEY_REPLACE_FIRST =
+            Options.key("replace_first")
+                    .booleanType()
+                    .noDefaultValue()
+                    .withDescription("Replace the first match string");
 
     private int inputFieldIndex;
     private String replaceField;
@@ -53,20 +79,24 @@ public class ReplaceTransform extends SingleFieldOutputTransform {
 
     @Override
     protected void setConfig(Config pluginConfig) {
-        CheckResult checkResult = CheckConfigUtil.checkAllExists(pluginConfig,
-            KEY_REPLACE_FIELD, KEY_PATTERN, KEY_REPLACEMENT);
+        CheckResult checkResult =
+                CheckConfigUtil.checkAllExists(
+                        pluginConfig,
+                        KEY_REPLACE_FIELD.key(),
+                        KEY_PATTERN.key(),
+                        KEY_REPLACEMENT.key());
         if (!checkResult.isSuccess()) {
-            throw new IllegalArgumentException("Field to check config! " + checkResult.getMsg());
+            throw new IllegalArgumentException("Failed to check config! " + checkResult.getMsg());
         }
 
-        replaceField = pluginConfig.getString(KEY_REPLACE_FIELD);
-        pattern = pluginConfig.getString(KEY_PATTERN);
-        replacement = pluginConfig.getString(KEY_REPLACEMENT);
-        if (pluginConfig.hasPath(KEY_IS_REGEX)) {
-            isRegex = pluginConfig.getBoolean(KEY_IS_REGEX);
+        replaceField = pluginConfig.getString(KEY_REPLACE_FIELD.key());
+        pattern = pluginConfig.getString(KEY_PATTERN.key());
+        replacement = pluginConfig.getString(KEY_REPLACEMENT.key());
+        if (pluginConfig.hasPath(KEY_IS_REGEX.key())) {
+            isRegex = pluginConfig.getBoolean(KEY_IS_REGEX.key());
         }
-        if (pluginConfig.hasPath(KEY_REPLACE_FIRST)) {
-            replaceFirst = pluginConfig.getBoolean(KEY_REPLACE_FIRST);
+        if (pluginConfig.hasPath(KEY_REPLACE_FIRST.key())) {
+            replaceFirst = pluginConfig.getBoolean(KEY_REPLACE_FIRST.key());
         }
     }
 
@@ -74,7 +104,8 @@ public class ReplaceTransform extends SingleFieldOutputTransform {
     protected void setInputRowType(SeaTunnelRowType rowType) {
         inputFieldIndex = rowType.indexOf(replaceField);
         if (inputFieldIndex == -1) {
-            throw new IllegalArgumentException("Cannot find [" + replaceField + "] field in input row type");
+            throw new IllegalArgumentException(
+                    "Cannot find [" + replaceField + "] field in input row type");
         }
     }
 

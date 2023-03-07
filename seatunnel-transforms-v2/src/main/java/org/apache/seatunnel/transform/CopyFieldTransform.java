@@ -17,6 +17,10 @@
 
 package org.apache.seatunnel.transform;
 
+import org.apache.seatunnel.shade.com.typesafe.config.Config;
+
+import org.apache.seatunnel.api.configuration.Option;
+import org.apache.seatunnel.api.configuration.Options;
 import org.apache.seatunnel.api.table.type.ArrayType;
 import org.apache.seatunnel.api.table.type.MapType;
 import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
@@ -28,8 +32,6 @@ import org.apache.seatunnel.common.config.CheckResult;
 import org.apache.seatunnel.transform.common.SeaTunnelRowAccessor;
 import org.apache.seatunnel.transform.common.SingleFieldOutputTransform;
 
-import org.apache.seatunnel.shade.com.typesafe.config.Config;
-
 import com.google.auto.service.AutoService;
 
 import java.lang.reflect.Array;
@@ -39,8 +41,17 @@ import java.util.Map;
 @AutoService(SeaTunnelTransform.class)
 public class CopyFieldTransform extends SingleFieldOutputTransform {
 
-    private static final String SRC_FIELD = "src_field";
-    private static final String DEST_FIELD = "dest_field";
+    public static final Option<String> SRC_FIELD =
+            Options.key("src_field")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription("Src field you want to copy");
+
+    public static final Option<String> DEST_FIELD =
+            Options.key("dest_field")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription("Copy Src field to Dest field");
 
     private String srcField;
     private int srcFieldIndex;
@@ -54,21 +65,22 @@ public class CopyFieldTransform extends SingleFieldOutputTransform {
 
     @Override
     protected void setConfig(Config pluginConfig) {
-        CheckResult checkResult = CheckConfigUtil.checkAllExists(pluginConfig,
-            SRC_FIELD, DEST_FIELD);
+        CheckResult checkResult =
+                CheckConfigUtil.checkAllExists(pluginConfig, SRC_FIELD.key(), DEST_FIELD.key());
         if (!checkResult.isSuccess()) {
-            throw new IllegalArgumentException("Field to check config! " + checkResult.getMsg());
+            throw new IllegalArgumentException("Failed to check config! " + checkResult.getMsg());
         }
 
-        this.srcField = pluginConfig.getString(SRC_FIELD);
-        this.destField = pluginConfig.getString(DEST_FIELD);
+        this.srcField = pluginConfig.getString(SRC_FIELD.key());
+        this.destField = pluginConfig.getString(DEST_FIELD.key());
     }
 
     @Override
     protected void setInputRowType(SeaTunnelRowType inputRowType) {
         srcFieldIndex = inputRowType.indexOf(srcField);
         if (srcFieldIndex == -1) {
-            throw new IllegalArgumentException("Cannot find [" + srcField + "] field in input row type");
+            throw new IllegalArgumentException(
+                    "Cannot find [" + srcField + "] field in input row type");
         }
         srcFieldDataType = inputRowType.getFieldType(srcFieldIndex);
     }
@@ -120,7 +132,8 @@ public class CopyFieldTransform extends SingleFieldOutputTransform {
                 if (array == null) {
                     return null;
                 }
-                Object newArray = Array.newInstance(arrayType.getElementType().getTypeClass(), array.length);
+                Object newArray =
+                        Array.newInstance(arrayType.getElementType().getTypeClass(), array.length);
                 for (int i = 0; i < array.length; i++) {
                     Array.set(newArray, i, clone(arrayType.getElementType(), array[i]));
                 }
@@ -130,7 +143,9 @@ public class CopyFieldTransform extends SingleFieldOutputTransform {
                 Map map = (Map) value;
                 Map newMap = new HashMap();
                 for (Object key : map.keySet()) {
-                    newMap.put(clone(mapType.getKeyType(), key), clone(mapType.getValueType(), map.get(key)));
+                    newMap.put(
+                            clone(mapType.getKeyType(), key),
+                            clone(mapType.getValueType(), map.get(key)));
                 }
                 return newMap;
             case ROW:
@@ -151,7 +166,8 @@ public class CopyFieldTransform extends SingleFieldOutputTransform {
             case NULL:
                 return null;
             default:
-                throw new UnsupportedOperationException("Unsupported type: " + dataType.getSqlType());
+                throw new UnsupportedOperationException(
+                        "Unsupported type: " + dataType.getSqlType());
         }
     }
 }

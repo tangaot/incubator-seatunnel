@@ -22,6 +22,8 @@ import org.apache.seatunnel.api.table.type.MapType;
 import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
+import org.apache.seatunnel.common.exception.CommonErrorCode;
+import org.apache.seatunnel.connectors.seatunnel.amazondynamodb.exception.AmazonDynamoDBConnectorException;
 
 import lombok.AllArgsConstructor;
 import software.amazon.awssdk.core.SdkBytes;
@@ -49,7 +51,8 @@ public class DefaultSeaTunnelRowDeserializer implements SeaTunnelRowDeserializer
         return new SeaTunnelRow(convertRow(seaTunnelDataTypes, item).toArray());
     }
 
-    private List<Object> convertRow(SeaTunnelDataType<?>[] seaTunnelDataTypes, Map<String, AttributeValue> item) {
+    private List<Object> convertRow(
+            SeaTunnelDataType<?>[] seaTunnelDataTypes, Map<String, AttributeValue> item) {
         List<Object> fields = new ArrayList<>();
         String[] fieldNames = typeInfo.getFieldNames();
         for (int i = 0; i < seaTunnelDataTypes.length; i++) {
@@ -96,17 +99,34 @@ public class DefaultSeaTunnelRowDeserializer implements SeaTunnelRowDeserializer
                 return attributeValue.b().asByteArray();
             case MAP:
                 Map<String, Object> seatunnelMap = new HashMap<>();
-                attributeValue.m().forEach((s, attributeValueInfo) -> {
-                    seatunnelMap.put(s, convert(((MapType) seaTunnelDataType).getValueType(), attributeValueInfo));
-                });
+                attributeValue
+                        .m()
+                        .forEach(
+                                (s, attributeValueInfo) -> {
+                                    seatunnelMap.put(
+                                            s,
+                                            convert(
+                                                    ((MapType) seaTunnelDataType).getValueType(),
+                                                    attributeValueInfo));
+                                });
                 return seatunnelMap;
             case ARRAY:
                 Object array = Array.newInstance(String.class, attributeValue.l().size());
                 if (attributeValue.hasL()) {
                     List<AttributeValue> datas = attributeValue.l();
-                    array = Array.newInstance(((ArrayType<?, ?>) seaTunnelDataType).getElementType().getTypeClass(), attributeValue.l().size());
+                    array =
+                            Array.newInstance(
+                                    ((ArrayType<?, ?>) seaTunnelDataType)
+                                            .getElementType()
+                                            .getTypeClass(),
+                                    attributeValue.l().size());
                     for (int index = 0; index < datas.size(); index++) {
-                        Array.set(array, index, convert(((ArrayType<?, ?>) seaTunnelDataType).getElementType(), datas.get(index)));
+                        Array.set(
+                                array,
+                                index,
+                                convert(
+                                        ((ArrayType<?, ?>) seaTunnelDataType).getElementType(),
+                                        datas.get(index)));
                     }
                 } else if (attributeValue.hasSs()) {
                     List<String> datas = attributeValue.ss();
@@ -126,8 +146,9 @@ public class DefaultSeaTunnelRowDeserializer implements SeaTunnelRowDeserializer
                 }
                 return array;
             default:
-                throw new IllegalStateException("Unexpected value: " + seaTunnelDataType);
+                throw new AmazonDynamoDBConnectorException(
+                        CommonErrorCode.UNSUPPORTED_DATA_TYPE,
+                        "Unsupported data type: " + seaTunnelDataType);
         }
     }
-
 }

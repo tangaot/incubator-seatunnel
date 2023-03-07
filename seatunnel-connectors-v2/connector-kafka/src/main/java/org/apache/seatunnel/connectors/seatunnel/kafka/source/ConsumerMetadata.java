@@ -21,13 +21,14 @@ import org.apache.seatunnel.connectors.seatunnel.kafka.config.StartMode;
 
 import org.apache.kafka.common.TopicPartition;
 
+import lombok.Data;
+
 import java.io.Serializable;
 import java.util.Map;
 import java.util.Properties;
 
-/**
- * Kafka consumer metadata, include topic, bootstrap server etc.
- */
+/** Kafka consumer metadata, include topic, bootstrap server etc. */
+@Data
 public class ConsumerMetadata implements Serializable {
 
     private String topic;
@@ -39,76 +40,4 @@ public class ConsumerMetadata implements Serializable {
     private StartMode startMode = StartMode.GROUP_OFFSETS;
     private Map<TopicPartition, Long> specificStartOffsets;
     private Long startOffsetsTimestamp;
-
-    public boolean isCommitOnCheckpoint() {
-        return commitOnCheckpoint;
-    }
-
-    public void setCommitOnCheckpoint(boolean commitOnCheckpoint) {
-        this.commitOnCheckpoint = commitOnCheckpoint;
-    }
-
-    public String getTopic() {
-        return topic;
-    }
-
-    public void setTopic(String topic) {
-        this.topic = topic;
-    }
-
-    public boolean isPattern() {
-        return isPattern;
-    }
-
-    public void setPattern(boolean pattern) {
-        isPattern = pattern;
-    }
-
-    public String getBootstrapServers() {
-        return bootstrapServers;
-    }
-
-    public void setBootstrapServers(String bootstrapServers) {
-        this.bootstrapServers = bootstrapServers;
-    }
-
-    public Properties getProperties() {
-        return properties;
-    }
-
-    public void setProperties(Properties properties) {
-        this.properties = properties;
-    }
-
-    public String getConsumerGroup() {
-        return consumerGroup;
-    }
-
-    public void setConsumerGroup(String consumerGroup) {
-        this.consumerGroup = consumerGroup;
-    }
-
-    public StartMode getStartMode() {
-        return startMode;
-    }
-
-    public void setStartMode(StartMode startMode) {
-        this.startMode = startMode;
-    }
-
-    public Map<TopicPartition, Long> getSpecificStartOffsets() {
-        return specificStartOffsets;
-    }
-
-    public void setSpecificStartOffsets(Map<TopicPartition, Long> specificStartOffsets) {
-        this.specificStartOffsets = specificStartOffsets;
-    }
-
-    public Long getStartOffsetsTimestamp() {
-        return startOffsetsTimestamp;
-    }
-
-    public void setStartOffsetsTimestamp(Long startOffsetsTimestamp) {
-        this.startOffsetsTimestamp = startOffsetsTimestamp;
-    }
 }

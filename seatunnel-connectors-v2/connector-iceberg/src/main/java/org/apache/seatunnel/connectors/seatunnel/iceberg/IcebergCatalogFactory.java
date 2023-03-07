@@ -17,9 +17,10 @@
 
 package org.apache.seatunnel.connectors.seatunnel.iceberg;
 
-import org.apache.seatunnel.connectors.seatunnel.iceberg.config.CommonConfig;
+import org.apache.seatunnel.common.exception.CommonErrorCode;
+import org.apache.seatunnel.connectors.seatunnel.iceberg.config.IcebergCatalogType;
+import org.apache.seatunnel.connectors.seatunnel.iceberg.exception.IcebergConnectorException;
 
-import lombok.NonNull;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
@@ -27,6 +28,8 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.hadoop.HadoopCatalog;
 import org.apache.iceberg.hadoop.SerializableConfiguration;
 import org.apache.iceberg.hive.HiveCatalog;
+
+import lombok.NonNull;
 
 import java.io.Serializable;
 import java.util.HashMap;
@@ -37,14 +40,15 @@ public class IcebergCatalogFactory implements Serializable {
     private static final long serialVersionUID = -6003040601422350869L;
 
     private final String catalogName;
-    private final String catalogType;
+    private final IcebergCatalogType catalogType;
     private final String warehouse;
     private final String uri;
 
-    public IcebergCatalogFactory(@NonNull String catalogName,
-                                 @NonNull String catalogType,
-                                 @NonNull String warehouse,
-                                 String uri) {
+    public IcebergCatalogFactory(
+            @NonNull String catalogName,
+            @NonNull IcebergCatalogType catalogType,
+            @NonNull String warehouse,
+            String uri) {
         this.catalogName = catalogName;
         this.catalogType = catalogType;
         this.warehouse = warehouse;
@@ -58,25 +62,27 @@ public class IcebergCatalogFactory implements Serializable {
         properties.put(CatalogProperties.WAREHOUSE_LOCATION, warehouse);
 
         switch (catalogType) {
-            case CommonConfig.CATALOG_TYPE_HADOOP:
+            case HADOOP:
                 return hadoop(catalogName, serializableConf, properties);
-            case CommonConfig.CATALOG_TYPE_HIVE:
+            case HIVE:
                 properties.put(CatalogProperties.URI, uri);
                 return hive(catalogName, serializableConf, properties);
             default:
-                throw new UnsupportedOperationException("Unsupported catalogType: " + catalogType);
+                throw new IcebergConnectorException(
+                        CommonErrorCode.UNSUPPORTED_OPERATION,
+                        String.format("Unsupported catalogType: %s", catalogType));
         }
     }
 
-    private static Catalog hadoop(String catalogName,
-                                  SerializableConfiguration conf,
-                                  Map<String, String> properties) {
-        return CatalogUtil.loadCatalog(HadoopCatalog.class.getName(), catalogName, properties, conf.get());
+    private static Catalog hadoop(
+            String catalogName, SerializableConfiguration conf, Map<String, String> properties) {
+        return CatalogUtil.loadCatalog(
+                HadoopCatalog.class.getName(), catalogName, properties, conf.get());
     }
 
-    private static Catalog hive(String catalogName,
-                                SerializableConfiguration conf,
-                                Map<String, String> properties) {
-        return CatalogUtil.loadCatalog(HiveCatalog.class.getName(), catalogName, properties, conf.get());
+    private static Catalog hive(
+            String catalogName, SerializableConfiguration conf, Map<String, String> properties) {
+        return CatalogUtil.loadCatalog(
+                HiveCatalog.class.getName(), catalogName, properties, conf.get());
     }
 }

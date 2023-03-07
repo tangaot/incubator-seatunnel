@@ -17,26 +17,32 @@
     limitations under the License.
 
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
     <parent>
-        <artifactId>seatunnel-connectors-v2</artifactId>
         <groupId>org.apache.seatunnel</groupId>
+        <artifactId>seatunnel-connectors-v2</artifactId>
         <version>${revision}</version>
     </parent>
-    <modelVersion>4.0.0</modelVersion>
 
     <artifactId>connector-jdbc</artifactId>
+    <name>SeaTunnel : Connectors V2 : Jdbc</name>
 
     <properties>
         <mysql.version>8.0.16</mysql.version>
-        <postgresql.version>42.4.1</postgresql.version>
+        <postgresql.version>42.4.3</postgresql.version>
         <dm-jdbc.version>8.1.2.141</dm-jdbc.version>
         <sqlserver.version>9.2.1.jre8</sqlserver.version>
         <phoenix.version>5.2.5-HBase-2.x</phoenix.version>
         <oracle.version>12.2.0.1</oracle.version>
+        <sqlite.version>3.39.3.0</sqlite.version>
         <db2.version>db2jcc4</db2.version>
+        <sqlite.version>3.39.3.0</sqlite.version>
+        <tablestore.version>5.13.9</tablestore.version>
+        <teradata.version>17.20.00.12</teradata.version>
+        <redshift.version>2.1.0.9</redshift.version>
+        <saphana.version>2.14.7</saphana.version>
     </properties>
 
     <dependencyManagement>
@@ -78,16 +84,54 @@
                 <scope>provided</scope>
             </dependency>
             <dependency>
+                <groupId>org.xerial</groupId>
+                <artifactId>sqlite-jdbc</artifactId>
+                <version>${sqlite.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
                 <groupId>com.ibm.db2.jcc</groupId>
                 <artifactId>db2jcc</artifactId>
                 <version>${db2.version}</version>
                 <scope>provided</scope>
             </dependency>
+            <dependency>
+                <groupId>com.aliyun.openservices</groupId>
+                <artifactId>tablestore-jdbc</artifactId>
+                <version>${tablestore.version}</version>
+                <scope>provided</scope>
+            </dependency>
 
+            <dependency>
+                <groupId>com.teradata.jdbc</groupId>
+                <artifactId>terajdbc4</artifactId>
+                <version>${teradata.version}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>com.amazon.redshift</groupId>
+                <artifactId>redshift-jdbc42</artifactId>
+                <version>${redshift.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <!-- https://mvnrepository.com/artifact/com.sap.cloud.db.jdbc/ngdbc -->
+            <dependency>
+                <groupId>com.sap.cloud.db.jdbc</groupId>
+                <artifactId>ngdbc</artifactId>
+                <version>${saphana.version}</version>
+                <scope>provided</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
     <dependencies>
+
+        <dependency>
+            <groupId>org.apache.seatunnel</groupId>
+            <artifactId>connector-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>mysql</groupId>
@@ -116,9 +160,29 @@
             <artifactId>ojdbc8</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.ibm.db2.jcc</groupId>
             <artifactId>db2jcc</artifactId>
         </dependency>
-    </dependencies>
+        <dependency>
+            <groupId>com.aliyun.openservices</groupId>
+            <artifactId>tablestore-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.teradata.jdbc</groupId>
+            <artifactId>terajdbc4</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.amazon.redshift</groupId>
+            <artifactId>redshift-jdbc42</artifactId>
+        </dependency>
 
+        <dependency>
+            <groupId>com.sap.cloud.db.jdbc</groupId>
+            <artifactId>ngdbc</artifactId>
+        </dependency>
+    </dependencies>
 </project>

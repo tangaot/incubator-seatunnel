@@ -17,14 +17,13 @@
 
 package org.apache.seatunnel.connectors.seatunnel.starrocks.config;
 
-import org.apache.seatunnel.common.config.TypesafeConfigUtils;
-
-import org.apache.seatunnel.shade.com.typesafe.config.Config;
+import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,108 +31,64 @@ import java.util.Map;
 @Setter
 @Getter
 @ToString
-public class SinkConfig {
-
-    public static final String NODE_URLS = "nodeUrls";
-    public static final String USERNAME = "username";
-    public static final String PASSWORD = "password";
-    public static final String LABEL_PREFIX = "labelPrefix";
-    public static final String DATABASE = "database";
-    public static final String TABLE = "table";
-    public static final String STARROCKS_SINK_CONFIG_PREFIX = "sink.properties.";
-    private static final String LOAD_FORMAT = "format";
-    private static final StreamLoadFormat DEFAULT_LOAD_FORMAT = StreamLoadFormat.CSV;
-    private static final String COLUMN_SEPARATOR = "column_separator";
-    public static final String BATCH_MAX_SIZE = "batch_max_rows";
-    public static final String BATCH_MAX_BYTES = "batch_max_bytes";
-    public static final String BATCH_INTERVAL_MS = "batch_interval_ms";
-    public static final String MAX_RETRIES = "max_retries";
-    public static final String RETRY_BACKOFF_MULTIPLIER_MS = "retry_backoff_multiplier_ms";
-    public static final String MAX_RETRY_BACKOFF_MS = "max_retry_backoff_ms";
+public class SinkConfig implements Serializable {
 
     public enum StreamLoadFormat {
-        CSV, JSON;
-        public static StreamLoadFormat parse(String format) {
-            if (StreamLoadFormat.JSON.name().equals(format)) {
-                return JSON;
-            }
-            return CSV;
-        }
+        CSV,
+        JSON;
     }
 
     private List<String> nodeUrls;
+    private String jdbcUrl;
     private String username;
     private String password;
     private String database;
     private String table;
     private String labelPrefix;
     private String columnSeparator;
-    private StreamLoadFormat loadFormat = DEFAULT_LOAD_FORMAT;
-    private static final int DEFAULT_BATCH_MAX_SIZE = 1024;
-    private static final long DEFAULT_BATCH_BYTES = 5 * 1024 * 1024;
-
-    private int batchMaxSize = DEFAULT_BATCH_MAX_SIZE;
-    private long batchMaxBytes = DEFAULT_BATCH_BYTES;
+    private StreamLoadFormat loadFormat;
+    private int batchMaxSize;
+    private long batchMaxBytes;
 
     private Integer batchIntervalMs;
     private int maxRetries;
     private int retryBackoffMultiplierMs;
     private int maxRetryBackoffMs;
+    private boolean enableUpsertDelete;
 
-    private final Map<String, Object> streamLoadProps = new HashMap<>();
+    private String saveModeCreateTemplate;
 
-    public static SinkConfig loadConfig(Config pluginConfig) {
+    @Getter private final Map<String, Object> streamLoadProps = new HashMap<>();
+
+    public static SinkConfig of(ReadonlyConfig config) {
         SinkConfig sinkConfig = new SinkConfig();
-        sinkConfig.setNodeUrls(pluginConfig.getStringList(NODE_URLS));
-        sinkConfig.setDatabase(pluginConfig.getString(DATABASE));
-        sinkConfig.setTable(pluginConfig.getString(TABLE));
-
-        if (pluginConfig.hasPath(USERNAME)) {
-            sinkConfig.setUsername(pluginConfig.getString(USERNAME));
-        }
-        if (pluginConfig.hasPath(PASSWORD)) {
-            sinkConfig.setPassword(pluginConfig.getString(PASSWORD));
-        }
-        if (pluginConfig.hasPath(LABEL_PREFIX)) {
-            sinkConfig.setLabelPrefix(pluginConfig.getString(LABEL_PREFIX));
-        }
-        if (pluginConfig.hasPath(COLUMN_SEPARATOR)) {
-            sinkConfig.setColumnSeparator(pluginConfig.getString(COLUMN_SEPARATOR));
-        }
-        if (pluginConfig.hasPath(BATCH_MAX_SIZE)) {
-            sinkConfig.setBatchMaxSize(pluginConfig.getInt(BATCH_MAX_SIZE));
-        }
-        if (pluginConfig.hasPath(BATCH_MAX_BYTES)) {
-            sinkConfig.setBatchMaxBytes(pluginConfig.getLong(BATCH_MAX_BYTES));
-        }
-        if (pluginConfig.hasPath(BATCH_INTERVAL_MS)) {
-            sinkConfig.setBatchIntervalMs(pluginConfig.getInt(BATCH_INTERVAL_MS));
-        }
-        if (pluginConfig.hasPath(MAX_RETRIES)) {
-            sinkConfig.setMaxRetries(pluginConfig.getInt(MAX_RETRIES));
-        }
-        if (pluginConfig.hasPath(RETRY_BACKOFF_MULTIPLIER_MS)) {
-            sinkConfig.setRetryBackoffMultiplierMs(pluginConfig.getInt(RETRY_BACKOFF_MULTIPLIER_MS));
-        }
-        if (pluginConfig.hasPath(MAX_RETRY_BACKOFF_MS)) {
-            sinkConfig.setMaxRetryBackoffMs(pluginConfig.getInt(MAX_RETRY_BACKOFF_MS));
-        }
-        parseSinkStreamLoadProperties(pluginConfig, sinkConfig);
-        if (sinkConfig.streamLoadProps.containsKey(COLUMN_SEPARATOR)) {
-            sinkConfig.setColumnSeparator((String) sinkConfig.streamLoadProps.get(COLUMN_SEPARATOR));
-        }
-        if (sinkConfig.streamLoadProps.containsKey(LOAD_FORMAT)) {
-            sinkConfig.setLoadFormat(StreamLoadFormat.parse((String) sinkConfig.streamLoadProps.get(LOAD_FORMAT)));
-        }
+        sinkConfig.setNodeUrls(config.get(StarRocksSinkOptions.NODE_URLS));
+        sinkConfig.setDatabase(config.get(StarRocksSinkOptions.DATABASE));
+        sinkConfig.setJdbcUrl(config.get(StarRocksOptions.BASE_URL));
+        config.getOptional(StarRocksOptions.USERNAME).ifPresent(sinkConfig::setUsername);
+        config.getOptional(StarRocksOptions.PASSWORD).ifPresent(sinkConfig::setPassword);
+        config.getOptional(StarRocksSinkOptions.TABLE).ifPresent(sinkConfig::setTable);
+        config.getOptional(StarRocksSinkOptions.LABEL_PREFIX).ifPresent(sinkConfig::setLabelPrefix);
+        sinkConfig.setBatchMaxSize(config.get(StarRocksSinkOptions.BATCH_MAX_SIZE));
+        sinkConfig.setBatchMaxBytes(config.get(StarRocksSinkOptions.BATCH_MAX_BYTES));
+        config.getOptional(StarRocksSinkOptions.BATCH_INTERVAL_MS)
+                .ifPresent(sinkConfig::setBatchIntervalMs);
+        config.getOptional(StarRocksSinkOptions.MAX_RETRIES).ifPresent(sinkConfig::setMaxRetries);
+        config.getOptional(StarRocksSinkOptions.RETRY_BACKOFF_MULTIPLIER_MS)
+                .ifPresent(sinkConfig::setRetryBackoffMultiplierMs);
+        config.getOptional(StarRocksSinkOptions.MAX_RETRY_BACKOFF_MS)
+                .ifPresent(sinkConfig::setMaxRetryBackoffMs);
+        config.getOptional(StarRocksSinkOptions.ENABLE_UPSERT_DELETE)
+                .ifPresent(sinkConfig::setEnableUpsertDelete);
+        sinkConfig.setSaveModeCreateTemplate(
+                config.get(StarRocksSinkOptions.SAVE_MODE_CREATE_TEMPLATE));
+        config.getOptional(StarRocksSinkOptions.SAVE_MODE_CREATE_TEMPLATE)
+                .ifPresent(sinkConfig::setSaveModeCreateTemplate);
+        config.getOptional(StarRocksSinkOptions.STARROCKS_CONFIG)
+                .ifPresent(options -> sinkConfig.getStreamLoadProps().putAll(options));
+        config.getOptional(StarRocksSinkOptions.COLUMN_SEPARATOR)
+                .ifPresent(sinkConfig::setColumnSeparator);
+        sinkConfig.setLoadFormat(config.get(StarRocksSinkOptions.LOAD_FORMAT));
         return sinkConfig;
-    }
-
-    private static void parseSinkStreamLoadProperties(Config pluginConfig, SinkConfig sinkConfig) {
-        Config starRocksConfig = TypesafeConfigUtils.extractSubConfig(pluginConfig,
-                STARROCKS_SINK_CONFIG_PREFIX, false);
-        starRocksConfig.entrySet().forEach(entry -> {
-            final String configKey = entry.getKey().toLowerCase();
-            sinkConfig.streamLoadProps.put(configKey, entry.getValue().unwrapped());
-        });
     }
 }

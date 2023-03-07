@@ -81,11 +81,15 @@ JAVA_OPTS="${JAVA_OPTS} -Dlog4j2.contextSelector=org.apache.logging.log4j.core.a
 if [ -e "${CONF_DIR}/log4j2.properties" ]; then
   JAVA_OPTS="${JAVA_OPTS} -Dlog4j2.configurationFile=${CONF_DIR}/log4j2.properties"
   JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.path=${APP_DIR}/logs"
-  JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.file_name=seatunnel-starter-server"
+  JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.file_name=seatunnel-engine-server"
 fi
 
-echo "JAVA_OPTS: ${JAVA_OPTS}"
-
 CLASS_PATH=${APP_DIR}/lib/*:${APP_JAR}
+
+ST_TMPDIR=`java -cp ${CLASS_PATH} org.apache.seatunnel.core.starter.seatunnel.jvm.TempDirectory`
+# The JVM options parser produces the final JVM options to start seatunnel-engine.
+JVM_OPTIONS=`java -cp ${CLASS_PATH} org.apache.seatunnel.core.starter.seatunnel.jvm.JvmOptionsParser ${CONF_DIR}`
+JAVA_OPTS="${JAVA_OPTS} ${JVM_OPTIONS//\$\{loggc\}/${ST_TMPDIR}}"
+echo "JAVA_OPTS:" ${JAVA_OPTS}
 
 java ${JAVA_OPTS} -cp ${CLASS_PATH} ${APP_MAIN} ${args}
