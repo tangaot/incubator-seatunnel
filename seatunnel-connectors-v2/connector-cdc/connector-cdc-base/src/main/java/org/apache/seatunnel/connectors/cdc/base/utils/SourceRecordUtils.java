@@ -17,15 +17,18 @@
 
 package org.apache.seatunnel.connectors.cdc.base.utils;
 
+import org.apache.seatunnel.api.table.catalog.TablePath;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
 
+import io.debezium.connector.AbstractSourceInfo;
 import io.debezium.data.Envelope;
 import io.debezium.document.DocumentReader;
 import io.debezium.relational.TableId;
+import io.debezium.relational.history.HistoryRecord;
 import io.debezium.util.SchemaNameAdjuster;
 
 import java.math.BigDecimal;
@@ -45,6 +48,8 @@ public class SourceRecordUtils {
 
     public static final String SCHEMA_CHANGE_EVENT_KEY_NAME =
             "io.debezium.connector.mysql.SchemaChangeKey";
+    public static final String HEARTBEAT_VALUE_SCHEMA_KEY_NAME =
+            "io.debezium.connector.common.Heartbeat";
     private static final DocumentReader DOCUMENT_READER = DocumentReader.defaultReader();
 
     /** Converts a {@link ResultSet} row to an array of Objects. */
@@ -65,7 +70,7 @@ public class SourceRecordUtils {
     public static Long getMessageTimestamp(SourceRecord record) {
         Schema schema = record.valueSchema();
         Struct value = (Struct) record.value();
-        if (schema.field(Envelope.FieldName.SOURCE) == null) {
+        if (schema == null || schema.field(Envelope.FieldName.SOURCE) == null) {
             return null;
         }
 
@@ -101,6 +106,11 @@ public class SourceRecordUtils {
         return valueSchema != null
                 && valueSchema.field(Envelope.FieldName.OPERATION) != null
                 && value.getString(Envelope.FieldName.OPERATION) != null;
+    }
+
+    public static boolean isHeartbeatRecord(SourceRecord record) {
+        Schema valueSchema = record.valueSchema();
+        return valueSchema != null && valueSchema.name().equals(HEARTBEAT_VALUE_SCHEMA_KEY_NAME);
     }
 
     public static TableId getTableId(SourceRecord dataRecord) {
@@ -192,5 +202,22 @@ public class SourceRecordUtils {
 
     private static BigDecimal toBigDecimal(Object numericObj) {
         return new BigDecimal(numericObj.toString());
+    }
+
+    public static TablePath getTablePath(SourceRecord record) {
+        Struct messageStruct = (Struct) record.value();
+        Struct sourceStruct = messageStruct.getStruct(Envelope.FieldName.SOURCE);
+        String databaseName = sourceStruct.getString(AbstractSourceInfo.DATABASE_NAME_KEY);
+        String tableName = sourceStruct.getString(AbstractSourceInfo.TABLE_NAME_KEY);
+        String schemaName = null;
+        if (sourceStruct.schema().field(AbstractSourceInfo.SCHEMA_NAME_KEY) != null) {
+            schemaName = sourceStruct.getString(AbstractSourceInfo.SCHEMA_NAME_KEY);
+        }
+        return TablePath.of(databaseName, schemaName, tableName);
+    }
+
+    public static String getDdl(SourceRecord record) {
+        Struct schemaChangeStruct = (Struct) record.value();
+        return schemaChangeStruct.getString(HistoryRecord.Fields.DDL_STATEMENTS);
     }
 }

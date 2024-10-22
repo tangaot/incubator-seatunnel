@@ -18,8 +18,10 @@
 package org.apache.seatunnel.connectors.seatunnel.kafka.sink;
 
 import org.apache.seatunnel.api.configuration.util.OptionRule;
+import org.apache.seatunnel.api.table.connector.TableSink;
 import org.apache.seatunnel.api.table.factory.Factory;
 import org.apache.seatunnel.api.table.factory.TableSinkFactory;
+import org.apache.seatunnel.api.table.factory.TableSinkFactoryContext;
 import org.apache.seatunnel.connectors.seatunnel.kafka.config.Config;
 
 import com.google.auto.service.AutoService;
@@ -35,8 +37,19 @@ public class KafkaSinkFactory implements TableSinkFactory {
     public OptionRule optionRule() {
         return OptionRule.builder()
                 .required(Config.TOPIC, Config.BOOTSTRAP_SERVERS)
-                .optional(Config.KAFKA_CONFIG, Config.ASSIGN_PARTITIONS, Config.TRANSACTION_PREFIX)
-                .exclusive(Config.PARTITION, Config.PARTITION_KEY_FIELDS)
+                .optional(
+                        Config.FORMAT,
+                        Config.KAFKA_CONFIG,
+                        Config.ASSIGN_PARTITIONS,
+                        Config.TRANSACTION_PREFIX,
+                        Config.SEMANTICS,
+                        Config.PARTITION,
+                        Config.PARTITION_KEY_FIELDS)
                 .build();
+    }
+
+    @Override
+    public TableSink createSink(TableSinkFactoryContext context) {
+        return () -> new KafkaSink(context.getOptions(), context.getCatalogTable());
     }
 }

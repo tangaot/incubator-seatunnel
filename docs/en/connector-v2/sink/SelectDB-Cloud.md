@@ -2,132 +2,172 @@
 
 > SelectDB Cloud sink connector
 
+## Support Those Engines
+
+> Spark<br/>
+> Flink<br/>
+> SeaTunnel Zeta<br/>
+
+## Key Features
+
+- [x] [exactly-once](../../concept/connector-v2-features.md)
+- [x] [cdc](../../concept/connector-v2-features.md)
+
 ## Description
 
 Used to send data to SelectDB Cloud. Both support streaming and batch mode.
 The internal implementation of SelectDB Cloud sink connector upload after batch caching and commit the CopyInto sql to load data into the table.
 
-## Key features
+## Supported DataSource Info
 
-- [x] [exactly-once](../../concept/connector-v2-features.md)
+:::tip
 
-By default, we use 2PC commit to ensure `exactly-once`
+Version Supported
 
-## Options
+* supported  `SelectDB Cloud version is >= 2.2.x`
 
-|        name         |  type  | required |  default value  |
-|---------------------|--------|----------|-----------------|
-| load-url            | string | yes      | -               |
-| jdbc-url            | string | yes      | -               |
-| cluster-name        | string | yes      | -               |
-| username            | string | yes      | -               |
-| password            | string | yes      | -               |
-| table.identifier    | string | yes      | -               |
-| selectdb.config     | map    | yes      | -               |
-| sink.buffer-size    | int    | no       | 1024*1024 (1MB) |
-| sink.buffer-count   | int    | no       | 3               |
-| sink.max-retries    | int    | no       | 1               |
-| sink.check-interval | int    | no       | 10000           |
+:::
 
-### load-url [string]
+## Sink Options
 
-`SelectDB Cloud` warehouse http address, the format is `warehouse_ip:http_port`
+|        Name        |  Type  | Required |        Default         |                                                                                                                                                                    Description                                                                                                                                                                    |
+|--------------------|--------|----------|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| load-url           | String | Yes      | -                      | `SelectDB Cloud` warehouse http address, the format is `warehouse_ip:http_port`                                                                                                                                                                                                                                                                   |
+| jdbc-url           | String | Yes      | -                      | `SelectDB Cloud` warehouse jdbc address, the format is `warehouse_ip:mysql_port`                                                                                                                                                                                                                                                                  |
+| cluster-name       | String | Yes      | -                      | `SelectDB Cloud` cluster name                                                                                                                                                                                                                                                                                                                     |
+| username           | String | Yes      | -                      | `SelectDB Cloud` user username                                                                                                                                                                                                                                                                                                                    |
+| password           | String | Yes      | -                      | `SelectDB Cloud` user password                                                                                                                                                                                                                                                                                                                    |
+| sink.enable-2pc    | bool   | No       | true                   | Whether to enable two-phase commit (2pc), the default is true, to ensure Exactly-Once semantics. SelectDB uses cache files to load data. When the amount of data is large, cached data may become invalid (the default expiration time is 1 hour). If you encounter a large amount of data write loss, please configure sink.enable-2pc to false. |
+| table.identifier   | String | Yes      | -                      | The name of `SelectDB Cloud` table, the format is `database.table`                                                                                                                                                                                                                                                                                |
+| sink.enable-delete | bool   | No       | false                  | Whether to enable deletion. This option requires SelectDB Cloud table to enable batch delete function, and only supports Unique model.                                                                                                                                                                                                            |
+| sink.max-retries   | int    | No       | 3                      | the max retry times if writing records to database failed                                                                                                                                                                                                                                                                                         |
+| sink.buffer-size   | int    | No       | 10 * 1024 * 1024 (1MB) | the buffer size to cache data for stream load.                                                                                                                                                                                                                                                                                                    |
+| sink.buffer-count  | int    | No       | 10000                  | the buffer count to cache data for stream load.                                                                                                                                                                                                                                                                                                   |
+| selectdb.config    | map    | yes      | -                      | This option is used to support operations such as `insert`, `delete`, and `update` when automatically generate sql,and supported formats.                                                                                                                                                                                                         |
 
-### jdbc-url [string]
+## Data Type Mapping
 
-`SelectDB Cloud` warehouse jdbc address, the format is `warehouse_ip:mysql_port`
+| SelectDB Cloud Data type |           SeaTunnel Data type           |
+|--------------------------|-----------------------------------------|
+| BOOLEAN                  | BOOLEAN                                 |
+| TINYINT                  | TINYINT                                 |
+| SMALLINT                 | SMALLINT<br/>TINYINT                    |
+| INT                      | INT<br/>SMALLINT<br/>TINYINT            |
+| BIGINT                   | BIGINT<br/>INT<br/>SMALLINT<br/>TINYINT |
+| LARGEINT                 | BIGINT<br/>INT<br/>SMALLINT<br/>TINYINT |
+| FLOAT                    | FLOAT                                   |
+| DOUBLE                   | DOUBLE<br/>FLOAT                        |
+| DECIMAL                  | DECIMAL<br/>DOUBLE<br/>FLOAT            |
+| DATE                     | DATE                                    |
+| DATETIME                 | TIMESTAMP                               |
+| CHAR                     | STRING                                  |
+| VARCHAR                  | STRING                                  |
+| STRING                   | STRING                                  |
+| ARRAY                    | ARRAY                                   |
+| MAP                      | MAP                                     |
+| JSON                     | STRING                                  |
+| HLL                      | Not supported yet                       |
+| BITMAP                   | Not supported yet                       |
+| QUANTILE_STATE           | Not supported yet                       |
+| STRUCT                   | Not supported yet                       |
 
-### cluster-name [string]
+#### Supported import data formats
 
-`SelectDB Cloud` cluster name
+The supported formats include CSV and JSON
 
-### username [string]
+## Task Example
 
-`SelectDB Cloud` user username
+### Simple:
 
-### password [string]
+> The following example describes writing multiple data types to SelectDBCloud, and users need to create corresponding tables downstream
 
-`SelectDB Cloud` user password
-
-### table.identifier [string]
-
-The name of `SelectDB Cloud` table, the format is `database.table`
-
-### sink.properties [string]
-
-Write property configuration
-CSV Write：
-selectdb.config {
-file.type='csv'
-file.column_separator=','
-file.line_delimiter='\n'
+```hocon
+env {
+  parallelism = 1
+  job.mode = "BATCH"
+  checkpoint.interval = 10000
 }
-JSON Write:
-selectdb.config {
-file.type="json"
-file.strip_outer_array="false"
+
+source {
+  FakeSource {
+    row.num = 10
+    map.size = 10
+    array.size = 10
+    bytes.length = 10
+    string.length = 10
+    schema = {
+      fields {
+        c_map = "map<string, array<int>>"
+        c_array = "array<int>"
+        c_string = string
+        c_boolean = boolean
+        c_tinyint = tinyint
+        c_smallint = smallint
+        c_int = int
+        c_bigint = bigint
+        c_float = float
+        c_double = double
+        c_decimal = "decimal(16, 1)"
+        c_null = "null"
+        c_bytes = bytes
+        c_date = date
+        c_timestamp = timestamp
+      }
+    }
+    }
 }
 
-### sink.buffer-size [string]
-
-Write data cache buffer size, unit byte. The default is 1 MB, and it is not recommended to modify it.
-
-### sink.buffer-count [string]
-
-The number of write data cache buffers, the default is 3, it is not recommended to modify.
-
-### sink.max-retries [string]
-
-The maximum number of retries in the Commit phase, the default is 1.
-
-### sink.check-interval [string]
-
-Periodic interval for writing files, in milliseconds, default 10 seconds.
-
-## Example
-
-Use JSON format to import data
-
-```
 sink {
   SelectDBCloud {
-    load-url="warehouse_ip:http_port"
-    jdbc-url="warehouse_ip:mysql_port"
-    cluster-name="Cluster"
-    table.identifier="test.test"
-    username="admin"
-    password="******"
+    load-url = "warehouse_ip:http_port"
+    jdbc-url = "warehouse_ip:mysql_port"
+    cluster-name = "Cluster"
+    table.identifier = "test.test"
+    username = "admin"
+    password = "******"
     selectdb.config {
-        file.type="json"
-        file.strip_outer_array="false"
+        file.type = "json"
     }
   }
 }
 ```
 
-Use CSV format to import data
+### Use JSON format to import data
 
 ```
 sink {
   SelectDBCloud {
-    load-url="warehouse_ip:http_port"
-    jdbc-url="warehouse_ip:mysql_port"
-    cluster-name="Cluster"
-    table.identifier="test.test"
-    username="admin"
-    password="******"
+    load-url = "warehouse_ip:http_port"
+    jdbc-url = "warehouse_ip:mysql_port"
+    cluster-name = "Cluster"
+    table.identifier = "test.test"
+    username = "admin"
+    password = "******"
     selectdb.config {
-        file.type='csv' 
-        file.column_separator=',' 
-        file.line_delimiter='\n' 
+        file.type = "json"
+    }
+  }
+}
+
+```
+
+### Use CSV format to import data
+
+```
+sink {
+  SelectDBCloud {
+    load-url = "warehouse_ip:http_port"
+    jdbc-url = "warehouse_ip:mysql_port"
+    cluster-name = "Cluster"
+    table.identifier = "test.test"
+    username = "admin"
+    password = "******"
+    selectdb.config {
+        file.type = "csv"
+        file.column_separator = "," 
+        file.line_delimiter = "\n" 
     }
   }
 }
 ```
-
-## Changelog
-
-### next version
-
-- [Feature] Support SelectDB Cloud Sink Connector [3958](https://github.com/apache/incubator-seatunnel/pull/3958)
 

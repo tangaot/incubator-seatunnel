@@ -53,7 +53,7 @@ Used to read data from Maxcompute.
 
 ### common options
 
-Sink plugin common parameters, please refer to [Sink Common Options](common-options.md) for details.
+Sink plugin common parameters, please refer to [Sink Common Options](../sink-common-options.md) for details.
 
 ## Examples
 
@@ -75,5 +75,5 @@ sink {
 
 ### next version
 
-- [Feature] Add Maxcompute Sink Connector([3640](https://github.com/apache/incubator-seatunnel/pull/3640))
+- [Feature] Add Maxcompute Sink Connector([3640](https://github.com/apache/seatunnel/pull/3640))
 

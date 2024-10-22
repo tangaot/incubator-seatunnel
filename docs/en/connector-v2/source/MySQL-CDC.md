@@ -2,6 +2,11 @@
 
 > MySQL CDC source connector
 
+## Support Those Engines
+
+> SeaTunnel Zeta<br/>
+> Flink <br/>
+
 ## Description
 
 The MySQL CDC connector allows for reading snapshot data and incremental data from MySQL database. This document
@@ -16,178 +21,289 @@ describes how to set up the MySQL CDC connector to run SQL queries against MySQL
 - [x] [parallelism](../../concept/connector-v2-features.md)
 - [x] [support user-defined split](../../concept/connector-v2-features.md)
 
-## Options
+## Supported DataSource Info
 
-|                      name                      |   type   | required | default value |
-|------------------------------------------------|----------|----------|---------------|
-| username                                       | String   | Yes      | -             |
-| password                                       | String   | Yes      | -             |
-| database-names                                 | List     | No       | -             |
-| table-names                                    | List     | Yes      | -             |
-| base-url                                       | String   | Yes      | -             |
-| startup.mode                                   | Enum     | No       | INITIAL       |
-| startup.timestamp                              | Long     | No       | -             |
-| startup.specific-offset.file                   | String   | No       | -             |
-| startup.specific-offset.pos                    | Long     | No       | -             |
-| stop.mode                                      | Enum     | No       | NEVER         |
-| stop.timestamp                                 | Long     | No       | -             |
-| stop.specific-offset.file                      | String   | No       | -             |
-| stop.specific-offset.pos                       | Long     | No       | -             |
-| incremental.parallelism                        | Integer  | No       | 1             |
-| snapshot.split.size                            | Integer  | No       | 8096          |
-| snapshot.fetch.size                            | Integer  | No       | 1024          |
-| server-id                                      | String   | No       | -             |
-| server-time-zone                               | String   | No       | UTC           |
-| connect.timeout.ms                             | Duration | No       | 30000         |
-| connect.max-retries                            | Integer  | No       | 3             |
-| connection.pool.size                           | Integer  | No       | 20            |
-| chunk-key.even-distribution.factor.upper-bound | Double   | No       | 1000          |
-| chunk-key.even-distribution.factor.lower-bound | Double   | No       | 0.05          |
-| debezium.*                                     | config   | No       | -             |
-| common-options                                 |          | no       | -             |
+| Datasource |                                                                  Supported versions                                                                  |          Driver          |               Url                |                                Maven                                 |
+|------------|------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------|----------------------------------|----------------------------------------------------------------------|
+| MySQL      | <li> [MySQL](https://dev.mysql.com/doc): 5.5, 5.6, 5.7, 8.0.x </li><li> [RDS MySQL](https://www.aliyun.com/product/rds/mysql): 5.6, 5.7, 8.0.x </li> | com.mysql.cj.jdbc.Driver | jdbc:mysql://localhost:3306/test | https://mvnrepository.com/artifact/mysql/mysql-connector-java/8.0.28 |
 
-### username [String]
+## Using Dependency
 
-Name of the database to use when connecting to the database server.
+### Install Jdbc Driver
 
-### password [String]
+#### For Flink Engine
 
-Password to use when connecting to the database server.
+> 1. You need to ensure that the [jdbc driver jar package](https://mvnrepository.com/artifact/mysql/mysql-connector-java) has been placed in directory `${SEATUNNEL_HOME}/plugins/`.
 
-### database-names [List]
+#### For SeaTunnel Zeta Engine
 
-Database name of the database to monitor.
+> 1. You need to ensure that the [jdbc driver jar package](https://mvnrepository.com/artifact/mysql/mysql-connector-java) has been placed in directory `${SEATUNNEL_HOME}/lib/`.
 
-### table-names [List]
+### Creating MySQL user
 
-Table name of the database to monitor. The table name needs to include the database name, for example: database_name.table_name
+You have to define a MySQL user with appropriate permissions on all databases that the Debezium MySQL connector monitors.
 
-### base-url [String]
+1. Create the MySQL user:
 
-URL has to be with database, like "jdbc:mysql://localhost:5432/db" or "jdbc:mysql://localhost:5432/db?useSSL=true".
+```sql
+mysql> CREATE USER 'user'@'localhost' IDENTIFIED BY 'password';
+```
 
-### startup.mode [Enum]
+2. Grant the required permissions to the user:
 
-Optional startup mode for MySQL CDC consumer, valid enumerations are "initial", "earliest", "latest" and "specific".
+```sql
+mysql> GRANT SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'user' IDENTIFIED BY 'password';
+```
 
-### startup.timestamp [Long]
+3. Finalize the user’s permissions:
 
-Start from the specified epoch timestamp (in milliseconds).
+```sql
+mysql> FLUSH PRIVILEGES;
+```
 
-**Note, This option is required when the "startup.mode" option used `'timestamp'`.**
+### Enabling the MySQL Binlog
 
-### startup.specific-offset.file [String]
+You must enable binary logging for MySQL replication. The binary logs record transaction updates for replication tools to propagate changes.
 
-Start from the specified binlog file name.
+1. Check whether the `log-bin` option is already on:
 
-**Note, This option is required when the "startup.mode" option used `'specific'`.**
+```sql
+mysql> show variables where variable_name in ('log_bin', 'binlog_format', 'binlog_row_image', 'gtid_mode', 'enforce_gtid_consistency');
++--------------------------+----------------+
+| Variable_name            | Value          |
++--------------------------+----------------+
+| binlog_format            | ROW            |
+| binlog_row_image         | FULL           |
+| enforce_gtid_consistency | ON             |
+| gtid_mode                | ON             |
+| log_bin                  | ON             |
++--------------------------+----------------+
+5 rows in set (0.00 sec)
+```
 
-### startup.specific-offset.pos [Long]
+2. If inconsistent with the above results, configure your MySQL server configuration file(`$MYSQL_HOME/mysql.cnf`) with the following properties, which are described in the table below:
 
-Start from the specified binlog file position.
+```
+# Enable binary replication log and set the prefix, expiration, and log format.
+# The prefix is arbitrary, expiration can be short for integration tests but would
+# be longer on a production system. Row-level info is required for ingest to work.
+# Server ID is required, but this will vary on production systems
+server-id         = 223344
+log_bin           = mysql-bin
+expire_logs_days  = 10
+binlog_format     = row
+# mysql 5.6+ requires binlog_row_image to be set to FULL
+binlog_row_image  = FULL
 
-**Note, This option is required when the "startup.mode" option used `'specific'`.**
+# enable gtid mode
+# mysql 5.6+ requires gtid_mode to be set to ON
+gtid_mode = on
+enforce_gtid_consistency = on
+```
 
-### stop.mode [Enum]
+3. Restart MySQL Server
 
-Optional stop mode for MySQL CDC consumer, valid enumerations are "never".
+```shell
+/etc/inint.d/mysqld restart
+```
 
-### stop.timestamp [Long]
+4. Confirm your changes by checking the binlog status once more:
 
-Stop from the specified epoch timestamp (in milliseconds).
+MySQL 5.5:
 
-**Note, This option is required when the "stop.mode" option used `'timestamp'`.**
+```sql
+mysql> show variables where variable_name in ('log_bin', 'binlog_format', 'binlog_row_image', 'gtid_mode', 'enforce_gtid_consistency');
++--------------------------+----------------+
+| Variable_name            | Value          |
++--------------------------+----------------+
+| binlog_format            | ROW            |
+| log_bin                  | ON             |
++--------------------------+----------------+
+5 rows in set (0.00 sec)
+```
 
-### stop.specific-offset.file [String]
+MySQL 5.6+:
 
-Stop from the specified binlog file name.
+```sql
+mysql> show variables where variable_name in ('log_bin', 'binlog_format', 'binlog_row_image', 'gtid_mode', 'enforce_gtid_consistency');
++--------------------------+----------------+
+| Variable_name            | Value          |
++--------------------------+----------------+
+| binlog_format            | ROW            |
+| binlog_row_image         | FULL           |
+| enforce_gtid_consistency | ON             |
+| gtid_mode                | ON             |
+| log_bin                  | ON             |
++--------------------------+----------------+
+5 rows in set (0.00 sec)
+```
 
-**Note, This option is required when the "stop.mode" option used `'specific'`.**
+### Notes
 
-### stop.specific-offset.pos [Long]
+#### Setting up MySQL session timeouts
 
-Stop from the specified binlog file position.
+When an initial consistent snapshot is made for large databases, your established connection could timeout while the tables are being read. You can prevent this behavior by configuring interactive_timeout and wait_timeout in your MySQL configuration file.
+- `interactive_timeout`: The number of seconds the server waits for activity on an interactive connection before closing it. See [MySQL’s documentation](https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_interactive_timeout) for more details.
+- `wait_timeout`: The number of seconds the server waits for activity on a non-interactive connection before closing it. See [MySQL’s documentation](https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_wait_timeout) for more details.
 
-**Note, This option is required when the "stop.mode" option used `'specific'`.**
+*For more database settings see [Debezium MySQL Connector](https://github.com/debezium/debezium/blob/v1.9.8.Final/documentation/modules/ROOT/pages/connectors/mysql.adoc#setting-up-mysql)*
 
-### incremental.parallelism [Integer]
+## Data Type Mapping
 
-The number of parallel readers in the incremental phase.
+|                                        Mysql Data Type                                         | SeaTunnel Data Type |
+|------------------------------------------------------------------------------------------------|---------------------|
+| BIT(1)<br/>TINYINT(1)                                                                          | BOOLEAN             |
+| TINYINT                                                                                        | TINYINT             |
+| TINYINT UNSIGNED<br/>SMALLINT                                                                  | SMALLINT            |
+| SMALLINT UNSIGNED<br/>MEDIUMINT<br/>MEDIUMINT UNSIGNED<br/>INT<br/>INTEGER<br/>YEAR            | INT                 |
+| INT UNSIGNED<br/>INTEGER UNSIGNED<br/>BIGINT                                                   | BIGINT              |
+| BIGINT UNSIGNED                                                                                | DECIMAL(20,0)       |
+| DECIMAL(p, s) <br/>DECIMAL(p, s) UNSIGNED <br/>NUMERIC(p, s) <br/>NUMERIC(p, s) UNSIGNED       | DECIMAL(p,s)        |
+| FLOAT<br/>FLOAT UNSIGNED                                                                       | FLOAT               |
+| DOUBLE<br/>DOUBLE UNSIGNED<br/>REAL<br/>REAL UNSIGNED                                          | DOUBLE              |
+| CHAR<br/>VARCHAR<br/>TINYTEXT<br/>MEDIUMTEXT<br/>TEXT<br/>LONGTEXT<br/>ENUM<br/>JSON<br/>ENUM  | STRING              |
+| DATE                                                                                           | DATE                |
+| TIME(s)                                                                                        | TIME(s)             |
+| DATETIME<br/>TIMESTAMP(s)                                                                      | TIMESTAMP(s)        |
+| BINARY<br/>VARBINAR<br/>BIT(p)<br/>TINYBLOB<br/>MEDIUMBLOB<br/>BLOB<br/>LONGBLOB <br/>GEOMETRY | BYTES               |
 
-### snapshot.split.size [Integer]
+## Source Options
 
-The split size (number of rows) of table snapshot, captured tables are split into multiple splits when read the snapshot
-of table.
+|                      Name                      |   Type   | Required | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+|------------------------------------------------|----------|----------|---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| base-url                                       | String   | Yes      | -       | The URL of the JDBC connection. Refer to a case: `jdbc:mysql://localhost:3306:3306/test`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| username                                       | String   | Yes      | -       | Name of the database to use when connecting to the database server.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| password                                       | String   | Yes      | -       | Password to use when connecting to the database server.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| database-names                                 | List     | No       | -       | Database name of the database to monitor.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| table-names                                    | List     | Yes      | -       | Table name of the database to monitor. The table name needs to include the database name, for example: `database_name.table_name`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| table-names-config                             | List     | No       | -       | Table config list. for example: [{"table": "db1.schema1.table1","primaryKeys":["key1"]}]                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| startup.mode                                   | Enum     | No       | INITIAL | Optional startup mode for MySQL CDC consumer, valid enumerations are `initial`, `earliest`, `latest` and `specific`. <br/> `initial`: Synchronize historical data at startup, and then synchronize incremental data.<br/> `earliest`: Startup from the earliest offset possible.<br/> `latest`: Startup from the latest offset.<br/> `specific`: Startup from user-supplied specific offsets.                                                                                                                                                                                                                        |
+| startup.specific-offset.file                   | String   | No       | -       | Start from the specified binlog file name. **Note, This option is required when the `startup.mode` option used `specific`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| startup.specific-offset.pos                    | Long     | No       | -       | Start from the specified binlog file position. **Note, This option is required when the `startup.mode` option used `specific`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| stop.mode                                      | Enum     | No       | NEVER   | Optional stop mode for MySQL CDC consumer, valid enumerations are `never`, `latest` or `specific`. <br/> `never`: Real-time job don't stop the source.<br/> `latest`: Stop from the latest offset.<br/> `specific`: Stop from user-supplied specific offset.                                                                                                                                                                                                                                                                                                                                                         |
+| stop.specific-offset.file                      | String   | No       | -       | Stop from the specified binlog file name. **Note, This option is required when the `stop.mode` option used `specific`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| stop.specific-offset.pos                       | Long     | No       | -       | Stop from the specified binlog file position. **Note, This option is required when the `stop.mode` option used `specific`.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| snapshot.split.size                            | Integer  | No       | 8096    | The split size (number of rows) of table snapshot, captured tables are split into multiple splits when read the snapshot of table.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| snapshot.fetch.size                            | Integer  | No       | 1024    | The maximum fetch size for per poll when read table snapshot.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| server-id                                      | String   | No       | -       | A numeric ID or a numeric ID range of this database client, The numeric ID syntax is like `5400`, the numeric ID range syntax is like '5400-5408'. <br/> Every ID must be unique across all currently-running database processes in the MySQL cluster. This connector joins the <br/> MySQL cluster as another server (with this unique ID) so it can read the binlog. <br/> By default, a random number is generated between 6500 and 2,148,492,146, though we recommend setting an explicit value.                                                                                                                 |
+| server-time-zone                               | String   | No       | UTC     | The session time zone in database server. If not set, then ZoneId.systemDefault() is used to determine the server time zone.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| connect.timeout.ms                             | Duration | No       | 30000   | The maximum time that the connector should wait after trying to connect to the database server before timing out.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| connect.max-retries                            | Integer  | No       | 3       | The max retry times that the connector should retry to build database server connection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| connection.pool.size                           | Integer  | No       | 20      | The jdbc connection pool size.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| chunk-key.even-distribution.factor.upper-bound | Double   | No       | 100     | The upper bound of the chunk key distribution factor. This factor is used to determine whether the table data is evenly distributed. If the distribution factor is calculated to be less than or equal to this upper bound (i.e., (MAX(id) - MIN(id) + 1) / row count), the table chunks would be optimized for even distribution. Otherwise, if the distribution factor is greater, the table will be considered as unevenly distributed and the sampling-based sharding strategy will be used if the estimated shard count exceeds the value specified by `sample-sharding.threshold`. The default value is 100.0. |
+| chunk-key.even-distribution.factor.lower-bound | Double   | No       | 0.05    | The lower bound of the chunk key distribution factor. This factor is used to determine whether the table data is evenly distributed. If the distribution factor is calculated to be greater than or equal to this lower bound (i.e., (MAX(id) - MIN(id) + 1) / row count), the table chunks would be optimized for even distribution. Otherwise, if the distribution factor is less, the table will be considered as unevenly distributed and the sampling-based sharding strategy will be used if the estimated shard count exceeds the value specified by `sample-sharding.threshold`. The default value is 0.05.  |
+| sample-sharding.threshold                      | Integer  | No       | 1000    | This configuration specifies the threshold of estimated shard count to trigger the sample sharding strategy. When the distribution factor is outside the bounds specified by `chunk-key.even-distribution.factor.upper-bound` and `chunk-key.even-distribution.factor.lower-bound`, and the estimated shard count (calculated as approximate row count / chunk size) exceeds this threshold, the sample sharding strategy will be used. This can help to handle large datasets more efficiently. The default value is 1000 shards.                                                                                   |
+| inverse-sampling.rate                          | Integer  | No       | 1000    | The inverse of the sampling rate used in the sample sharding strategy. For example, if this value is set to 1000, it means a 1/1000 sampling rate is applied during the sampling process. This option provides flexibility in controlling the granularity of the sampling, thus affecting the final number of shards. It's especially useful when dealing with very large datasets where a lower sampling rate is preferred. The default value is 1000.                                                                                                                                                              |
+| exactly_once                                   | Boolean  | No       | false   | Enable exactly once semantic.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| format                                         | Enum     | No       | DEFAULT | Optional output format for MySQL CDC, valid enumerations are `DEFAULT`、`COMPATIBLE_DEBEZIUM_JSON`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| debezium                                       | Config   | No       | -       | Pass-through [Debezium's properties](https://github.com/debezium/debezium/blob/v1.9.8.Final/documentation/modules/ROOT/pages/connectors/mysql.adoc#connector-properties) to Debezium Embedded Engine which is used to capture data changes from MySQL server.  Schema evolution is disabled by default.  You need configure `debezium.include.schema.changes = true` to enable it. Now we only support `add column`、`drop column`、`rename column` and `modify column`.                                                                                                                                               |
+| common-options                                 |          | no       | -       | Source plugin common parameters, please refer to [Source Common Options](../source-common-options.md) for details                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
-### snapshot.fetch.size [Integer]
+## Task Example
 
-The maximum fetch size for per poll when read table snapshot.
+### Simple
 
-### server-id [String]
+> Support multi-table reading
 
-A numeric ID or a numeric ID range of this database client, The numeric ID syntax is like '5400', the numeric ID range
-syntax is like '5400-5408'.
+```
+env {
+  parallelism = 1
+  job.mode = "STREAMING"
+  checkpoint.interval = 10000
+}
 
-Every ID must be unique across all currently-running database processes in the MySQL cluster. This connector joins the
-MySQL cluster as another server (with this unique ID) so it can read the binlog.
-
-By default, a random number is generated between 5400 and 6400, though we recommend setting an explicit value.
-
-### server-time-zone [String]
-
-The session time zone in database server.
-
-### connect.timeout.ms [long]
-
-The maximum time that the connector should wait after trying to connect to the database server before timing out.
-
-### connect.max-retries [Integer]
-
-The max retry times that the connector should retry to build database server connection.
-
-### connection.pool.size [Integer]
-
-The connection pool size.
-
-### debezium [Config]
-
-Pass-through Debezium's properties to Debezium Embedded Engine which is used to capture data changes from MySQL server.
-
-See more about
-the [Debezium's MySQL Connector properties](https://debezium.io/documentation/reference/1.6/connectors/mysql.html#mysql-connector-properties)
-
-#### example
-
-```conf
 source {
   MySQL-CDC {
-    debezium {
-        snapshot.mode = "never"
-        decimal.handling.mode = "double"
+    base-url = "jdbc:mysql://localhost:3306/testdb"
+    username = "root"
+    password = "root@123"
+    table-names = ["testdb.table1", "testdb.table2"]
+    
+    startup.mode = "initial"
+  }
+}
+
+sink {
+  Console {
+  }
+}
+```
+
+### Support debezium-compatible format send to kafka
+
+> Must be used with kafka connector sink, see [compatible debezium format](../formats/cdc-compatible-debezium-json.md) for details
+
+### Support custom primary key for table
+
+```
+env {
+  parallelism = 1
+  job.mode = "STREAMING"
+  checkpoint.interval = 10000
+}
+
+source {
+  MySQL-CDC {
+    base-url = "jdbc:mysql://localhost:3306/testdb"
+    username = "root"
+    password = "root@123"
+    
+    table-names = ["testdb.table1", "testdb.table2"]
+    table-names-config = [
+      {
+        table = "testdb.table2"
+        primaryKeys = ["id"]
+      }
+    ]
+  }
+}
+
+sink {
+  Console {
+  }
+}
+```
+### Support schema evolution
+```
+env {
+  # You can set engine configuration here
+  parallelism = 5
+  job.mode = "STREAMING"
+  checkpoint.interval = 5000
+  read_limit.bytes_per_second=7000000
+  read_limit.rows_per_second=400
+}
+
+source {
+  MySQL-CDC {
+    server-id = 5652-5657
+    username = "st_user_source"
+    password = "mysqlpw"
+    table-names = ["shop.products"]
+    base-url = "jdbc:mysql://mysql_cdc_e2e:3306/shop"
+    debezium = {
+      include.schema.changes = true
     }
   }
 }
-```
 
-### common options
-
-Source plugin common parameters, please refer to [Source Common Options](common-options.md) for details.
-
-## Example
-
-```Jdbc {
-source {
-  MySQL-CDC {
-    result_table_name = "fake"
-    parallelism = 1
-    server-id = 5656
-    username = "mysqluser"
+sink {
+  jdbc {
+    url = "jdbc:mysql://mysql_cdc_e2e:3306/shop"
+    driver = "com.mysql.cj.jdbc.Driver"
+    user = "st_user_sink"
     password = "mysqlpw"
-    table-names = ["inventory_vwyw0n.products"]
-    base-url = "jdbc:mysql://localhost:56725/inventory_vwyw0n"
+    generate_sink_sql = true
+    database = shop
+    table = mysql_cdc_e2e_sink_table_with_schema_change_exactly_once
+    primary_keys = ["id"]
+    is_exactly_once = true
+    xa_data_source_class_name = "com.mysql.cj.jdbc.MysqlXADataSource"
   }
 }
+
 ```
+
 
 ## Changelog
 

@@ -18,6 +18,7 @@
 package org.apache.seatunnel.engine.server.task.operation;
 
 import org.apache.seatunnel.engine.server.SeaTunnelServer;
+import org.apache.seatunnel.engine.server.execution.TaskDeployState;
 import org.apache.seatunnel.engine.server.resourcemanager.resource.SlotProfile;
 import org.apache.seatunnel.engine.server.serializable.TaskDataSerializerHook;
 
@@ -26,14 +27,15 @@ import com.hazelcast.internal.serialization.Data;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
-import com.hazelcast.spi.impl.operationservice.Operation;
 import lombok.NonNull;
 
 import java.io.IOException;
 
-public class DeployTaskOperation extends Operation implements IdentifiedDataSerializable {
+public class DeployTaskOperation extends TracingOperation implements IdentifiedDataSerializable {
     private Data taskImmutableInformation;
     private SlotProfile slotProfile;
+
+    private TaskDeployState state;
 
     public DeployTaskOperation() {}
 
@@ -44,12 +46,13 @@ public class DeployTaskOperation extends Operation implements IdentifiedDataSeri
     }
 
     @Override
-    public void run() throws Exception {
+    public void runInternal() throws Exception {
         SeaTunnelServer server = getService();
-        server.getSlotService()
-                .getSlotContext(slotProfile)
-                .getTaskExecutionService()
-                .deployTask(taskImmutableInformation);
+        state =
+                server.getSlotService()
+                        .getSlotContext(slotProfile)
+                        .getTaskExecutionService()
+                        .deployTask(taskImmutableInformation);
     }
 
     @Override
@@ -60,6 +63,11 @@ public class DeployTaskOperation extends Operation implements IdentifiedDataSeri
     @Override
     public int getClassId() {
         return TaskDataSerializerHook.DEPLOY_TASK_OPERATOR;
+    }
+
+    @Override
+    public Object getResponse() {
+        return state;
     }
 
     @Override

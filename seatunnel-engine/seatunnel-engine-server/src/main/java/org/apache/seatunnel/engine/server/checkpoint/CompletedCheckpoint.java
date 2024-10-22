@@ -20,9 +20,14 @@ package org.apache.seatunnel.engine.server.checkpoint;
 import org.apache.seatunnel.engine.core.checkpoint.Checkpoint;
 import org.apache.seatunnel.engine.core.checkpoint.CheckpointType;
 
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
+
 import java.io.Serializable;
 import java.util.Map;
 
+@ToString
 public class CompletedCheckpoint implements Checkpoint, Serializable {
     private static final long serialVersionUID = 1L;
     private final long jobId;
@@ -37,9 +42,11 @@ public class CompletedCheckpoint implements Checkpoint, Serializable {
 
     private final long completedTimestamp;
 
-    private final Map<Long, ActionState> taskStates;
+    private final Map<ActionStateKey, ActionState> taskStates;
 
     private final Map<Long, TaskStatistics> taskStatistics;
+
+    @Getter @Setter private volatile boolean isRestored = false;
 
     public CompletedCheckpoint(
             long jobId,
@@ -48,7 +55,7 @@ public class CompletedCheckpoint implements Checkpoint, Serializable {
             long triggerTimestamp,
             CheckpointType checkpointType,
             long completedTimestamp,
-            Map<Long, ActionState> taskStates,
+            Map<ActionStateKey, ActionState> taskStates,
             Map<Long, TaskStatistics> taskStatistics) {
         this.jobId = jobId;
         this.pipelineId = pipelineId;
@@ -89,7 +96,7 @@ public class CompletedCheckpoint implements Checkpoint, Serializable {
         return completedTimestamp;
     }
 
-    public Map<Long, ActionState> getTaskStates() {
+    public Map<ActionStateKey, ActionState> getTaskStates() {
         return taskStates;
     }
 

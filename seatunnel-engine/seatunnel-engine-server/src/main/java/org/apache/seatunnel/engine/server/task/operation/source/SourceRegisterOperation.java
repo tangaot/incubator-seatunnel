@@ -20,16 +20,17 @@ package org.apache.seatunnel.engine.server.task.operation.source;
 import org.apache.seatunnel.common.utils.RetryUtils;
 import org.apache.seatunnel.engine.common.Constant;
 import org.apache.seatunnel.engine.server.SeaTunnelServer;
+import org.apache.seatunnel.engine.server.checkpoint.operation.CheckpointErrorReportOperation;
 import org.apache.seatunnel.engine.server.exception.TaskGroupContextNotFoundException;
 import org.apache.seatunnel.engine.server.execution.TaskLocation;
 import org.apache.seatunnel.engine.server.serializable.TaskDataSerializerHook;
 import org.apache.seatunnel.engine.server.task.SourceSplitEnumeratorTask;
+import org.apache.seatunnel.engine.server.task.operation.TracingOperation;
 
 import com.hazelcast.cluster.Address;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
-import com.hazelcast.spi.impl.operationservice.Operation;
 
 import java.io.IOException;
 
@@ -37,7 +38,8 @@ import java.io.IOException;
  * For {@link org.apache.seatunnel.api.source.SourceReader} to register with the {@link
  * org.apache.seatunnel.api.source.SourceSplitEnumerator}
  */
-public class SourceRegisterOperation extends Operation implements IdentifiedDataSerializable {
+public class SourceRegisterOperation extends TracingOperation
+        implements IdentifiedDataSerializable {
 
     private TaskLocation readerTaskID;
     private TaskLocation enumeratorTaskID;
@@ -50,14 +52,37 @@ public class SourceRegisterOperation extends Operation implements IdentifiedData
     }
 
     @Override
-    public void run() throws Exception {
+    public void runInternal() throws Exception {
         SeaTunnelServer server = getService();
         Address readerAddress = getCallerAddress();
         RetryUtils.retryWithException(
                 () -> {
+                    ClassLoader classLoader =
+                            server.getTaskExecutionService()
+                                    .getExecutionContext(enumeratorTaskID.getTaskGroupLocation())
+                                    .getClassLoader(enumeratorTaskID.getTaskID());
+                    ClassLoader oldClassLoader = Thread.currentThread().getContextClassLoader();
                     SourceSplitEnumeratorTask<?> task =
                             server.getTaskExecutionService().getTask(enumeratorTaskID);
-                    task.receivedReader(readerTaskID, readerAddress);
+                    task.getExecutionContext()
+                            .getTaskExecutionService()
+                            .asyncExecuteFunction(
+                                    enumeratorTaskID.getTaskGroupLocation(),
+                                    () -> {
+                                        try {
+                                            Thread.currentThread()
+                                                    .setContextClassLoader(classLoader);
+                                            task.receivedReader(readerTaskID, readerAddress);
+                                        } catch (Exception e) {
+                                            task.getExecutionContext()
+                                                    .sendToMaster(
+                                                            new CheckpointErrorReportOperation(
+                                                                    enumeratorTaskID, e));
+                                        } finally {
+                                            Thread.currentThread()
+                                                    .setContextClassLoader(oldClassLoader);
+                                        }
+                                    });
                     return null;
                 },
                 new RetryUtils.RetryMaterial(

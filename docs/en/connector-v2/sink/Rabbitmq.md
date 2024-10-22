@@ -24,6 +24,7 @@ Used to write data to Rabbitmq.
 | network_recovery_interval  | int     | no       | -             |
 | topology_recovery_enabled  | boolean | no       | -             |
 | automatic_recovery_enabled | boolean | no       | -             |
+| use_correlation_id         | boolean | no       | false         |
 | connection_timeout         | int     | no       | -             |
 | rabbitmq.config            | map     | no       | -             |
 | common-options             |         | no       | -             |
@@ -56,6 +57,21 @@ convenience method for setting the fields in an AMQP URI: host, port, username, 
 
 the queue to write the message to
 
+### durable [boolean]
+
+true: The queue will survive a server restart.
+false: The queue will be deleted on server restart.
+
+### exclusive [boolean]
+
+true: The queue is used only by the current connection and will be deleted when the connection closes.
+false: The queue can be used by multiple connections.
+
+### auto_delete [boolean]
+
+true: The queue will be deleted automatically when the last consumer unsubscribes.
+false: The queue will not be automatically deleted.
+
 ### schema [Config]
 
 #### fields [Config]
@@ -66,13 +82,17 @@ the schema fields of upstream data.
 
 how long will automatic recovery wait before attempting to reconnect, in ms
 
-### topology_recovery [string]
+### topology_recovery_enabled [boolean]
 
 if true, enables topology recovery
 
-### automatic_recovery [string]
+### automatic_recovery_enabled [boolean]
 
 if true, enables connection recovery
+
+### use_correlation_id [boolean]
+
+whether the messages received are supplied with a unique id to deduplicate messages (in case of failed acknowledgments).
 
 ### connection_timeout [int]
 
@@ -84,7 +104,7 @@ In addition to the above parameters that must be specified by the RabbitMQ clien
 
 ### common options
 
-Sink plugin common parameters, please refer to [Sink Common Options](common-options.md) for details
+Sink plugin common parameters, please refer to [Sink Common Options](../sink-common-options.md) for details
 
 ## Example
 
@@ -107,10 +127,34 @@ sink {
 }
 ```
 
+### Example 2
+
+queue with durable, exclusive, auto_delete:
+
+```hocon
+sink {
+      RabbitMQ {
+          host = "rabbitmq-e2e"
+          port = 5672
+          virtual_host = "/"
+          username = "guest"
+          password = "guest"
+          queue_name = "test1"
+          durable = "true"
+          exclusive = "false"
+          auto_delete = "false"
+          rabbitmq.config = {
+            requested-heartbeat = 10
+            connection-timeout = 10
+          }
+      }
+}
+```
+
 ## Changelog
 
 ### next version
 
 - Add Rabbitmq Sink Connector
-- [Improve] Change Connector Custom Config Prefix To Map [3719](https://github.com/apache/incubator-seatunnel/pull/3719)
+- [Improve] Change Connector Custom Config Prefix To Map [3719](https://github.com/apache/seatunnel/pull/3719)
 

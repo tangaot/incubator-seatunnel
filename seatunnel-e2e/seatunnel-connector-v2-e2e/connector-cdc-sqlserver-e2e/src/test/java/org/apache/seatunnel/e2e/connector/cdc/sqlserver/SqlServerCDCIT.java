@@ -19,20 +19,23 @@ package org.apache.seatunnel.e2e.connector.cdc.sqlserver;
 
 import org.apache.seatunnel.e2e.common.TestResource;
 import org.apache.seatunnel.e2e.common.TestSuiteBase;
+import org.apache.seatunnel.e2e.common.container.ContainerExtendedFactory;
 import org.apache.seatunnel.e2e.common.container.EngineType;
 import org.apache.seatunnel.e2e.common.container.TestContainer;
 import org.apache.seatunnel.e2e.common.junit.DisabledOnContainer;
+import org.apache.seatunnel.e2e.common.junit.TestContainerExtension;
 
 import org.awaitility.Awaitility;
 import org.awaitility.core.ConditionTimeoutException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.junit.jupiter.api.TestTemplate;
+import org.testcontainers.containers.Container;
 import org.testcontainers.containers.MSSQLServerContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.lifecycle.Startables;
+import org.testcontainers.utility.DockerLoggerFactory;
 
 import com.google.common.collect.Lists;
 import lombok.extern.slf4j.Slf4j;
@@ -62,15 +65,13 @@ import static org.awaitility.Awaitility.await;
 @Slf4j
 @DisabledOnContainer(
         value = {},
-        type = {EngineType.SPARK, EngineType.FLINK},
-        disabledReason = "")
+        type = {EngineType.SPARK},
+        disabledReason = "Currently SPARK do not support cdc")
 public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
 
     private static final String HOST = "sqlserver-host";
 
     private static final int PORT = 1433;
-
-    protected static final Logger LOG = LoggerFactory.getLogger(SqlServerCDCIT.class);
 
     private static final String STATEMENTS_PLACEHOLDER = "#";
 
@@ -79,9 +80,72 @@ public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
     private static final String DISABLE_DB_CDC =
             "IF EXISTS(select 1 from sys.databases where name='#' AND is_cdc_enabled=1)\n"
                     + "EXEC sys.sp_cdc_disable_db";
-
-    private static final String SOURCE_SQL = "select * from column_type_test.dbo.full_types";
-    private static final String SINK_SQL = "select * from column_type_test.dbo.full_types_sink";
+    private static final String SOURCE_TABLE = "column_type_test.dbo.full_types";
+    private static final String SOURCE_TABLE_NO_PRIMARY_KEY =
+            "column_type_test.dbo.full_types_no_primary_key";
+    private static final String SOURCE_TABLE_CUSTOM_PRIMARY_KEY =
+            "column_type_test.dbo.full_types_custom_primary_key";
+    private static final String SINK_TABLE = "column_type_test.dbo.full_types_sink";
+    private static final String SELECT_SOURCE_SQL =
+            "select\n"
+                    + "  id,\n"
+                    + "  val_char,\n"
+                    + "  val_varchar,\n"
+                    + "  val_text,\n"
+                    + "  val_nchar,\n"
+                    + "  val_nvarchar,\n"
+                    + "  val_ntext,\n"
+                    + "  val_decimal,\n"
+                    + "  val_numeric,\n"
+                    + "  val_float,\n"
+                    + "  val_real,\n"
+                    + "  val_smallmoney,\n"
+                    + "  val_money,\n"
+                    + "  val_bit,\n"
+                    + "  val_tinyint,\n"
+                    + "  val_smallint,\n"
+                    + "  val_int,\n"
+                    + "  val_bigint,\n"
+                    + "  val_date,\n"
+                    + "  val_time,\n"
+                    + "  val_datetime2,\n"
+                    + "  val_datetime,\n"
+                    + "  val_smalldatetime,\n"
+                    + "  val_xml,\n"
+                    + "  val_datetimeoffset,\n"
+                    + "  CONVERT(varchar(100), val_varbinary) as val_varbinary,\n"
+                    + "  val_udtdecimal\n"
+                    + "from %s order by id asc";
+    private static final String SELECT_SINK_SQL =
+            "select\n"
+                    + "  id,\n"
+                    + "  val_char,\n"
+                    + "  val_varchar,\n"
+                    + "  val_text,\n"
+                    + "  val_nchar,\n"
+                    + "  val_nvarchar,\n"
+                    + "  val_ntext,\n"
+                    + "  val_decimal,\n"
+                    + "  val_numeric,\n"
+                    + "  val_float,\n"
+                    + "  val_real,\n"
+                    + "  val_smallmoney,\n"
+                    + "  val_money,\n"
+                    + "  val_bit,\n"
+                    + "  val_tinyint,\n"
+                    + "  val_smallint,\n"
+                    + "  val_int,\n"
+                    + "  val_bigint,\n"
+                    + "  val_date,\n"
+                    + "  val_time,\n"
+                    + "  val_datetime2,\n"
+                    + "  val_datetime,\n"
+                    + "  val_smalldatetime,\n"
+                    + "  val_xml,\n"
+                    + "  val_datetimeoffset,\n"
+                    + "  CONVERT(varchar(100), val_varbinary) as val_varbinary,\n"
+                    + "  val_udtdecimal\n"
+                    + "from %s order by id asc";
 
     public static final MSSQLServerContainer MSSQL_SERVER_CONTAINER =
             new MSSQLServerContainer<>("mcr.microsoft.com/mssql/server:2019-latest")
@@ -90,7 +154,25 @@ public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
                     .withEnv("MSSQL_PID", "Standard")
                     .withNetwork(NETWORK)
                     .withNetworkAliases(HOST)
-                    .withLogConsumer(new Slf4jLogConsumer(LOG));
+                    .withLogConsumer(
+                            new Slf4jLogConsumer(
+                                    DockerLoggerFactory.getLogger("sqlserver-docker-image")));
+
+    private String driverUrl() {
+        return "https://repo1.maven.org/maven2/com/microsoft/sqlserver/mssql-jdbc/9.4.1.jre8/mssql-jdbc-9.4.1.jre8.jar";
+    }
+
+    @TestContainerExtension
+    protected final ContainerExtendedFactory extendedFactory =
+            container -> {
+                Container.ExecResult extraCommands =
+                        container.execInContainer(
+                                "bash",
+                                "-c",
+                                "mkdir -p /tmp/seatunnel/plugins/SqlServer-CDC/lib && cd /tmp/seatunnel/plugins/SqlServer-CDC/lib && wget "
+                                        + driverUrl());
+                Assertions.assertEquals(0, extraCommands.getExitCode(), extraCommands.getStderr());
+            };
 
     @Override
     @BeforeAll
@@ -105,15 +187,14 @@ public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
     @Override
     @AfterAll
     public void tearDown() throws Exception {
-        LOG.info("Stopping containers...");
+        log.info("Stopping containers...");
         if (MSSQL_SERVER_CONTAINER != null) {
             MSSQL_SERVER_CONTAINER.stop();
         }
-        LOG.info("Containers are stopped.");
+        log.info("Containers are stopped.");
     }
 
-    // Temporary disabled because the test can not be executed successfully
-    // https://github.com/apache/incubator-seatunnel/issues/3827
+    @TestTemplate
     public void test(TestContainer container) throws IOException, InterruptedException {
         initializeSqlServerTable("column_type_test");
 
@@ -133,23 +214,96 @@ public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
                 .untilAsserted(
                         () -> {
                             Assertions.assertIterableEquals(
-                                    querySql(SOURCE_SQL), querySql(SINK_SQL));
+                                    querySql(SELECT_SOURCE_SQL, SOURCE_TABLE),
+                                    querySql(SELECT_SINK_SQL, SINK_TABLE));
                         });
 
         // insert update delete
-        updateSourceTable();
+        updateSourceTable(SOURCE_TABLE);
 
         // stream stage
         await().atMost(60000, TimeUnit.MILLISECONDS)
                 .untilAsserted(
                         () -> {
-                            Assertions.assertEquals(4, querySql(SINK_SQL).size());
+                            Assertions.assertIterableEquals(
+                                    querySql(SELECT_SOURCE_SQL, SOURCE_TABLE),
+                                    querySql(SELECT_SINK_SQL, SINK_TABLE));
                         });
+    }
+
+    @TestTemplate
+    public void testCDCWithNoPrimaryKey(TestContainer container) {
+        initializeSqlServerTable("column_type_test");
+
+        CompletableFuture<Void> executeJobFuture =
+                CompletableFuture.supplyAsync(
+                        () -> {
+                            try {
+                                container.executeJob(
+                                        "/sqlservercdc_to_sqlserver_with_no_primary_key.conf");
+                            } catch (Exception e) {
+                                throw new RuntimeException(e);
+                            }
+                            return null;
+                        });
+
+        // snapshot stage
         await().atMost(60000, TimeUnit.MILLISECONDS)
                 .untilAsserted(
                         () -> {
                             Assertions.assertIterableEquals(
-                                    querySql(SOURCE_SQL), querySql(SINK_SQL));
+                                    querySql(SELECT_SOURCE_SQL, SOURCE_TABLE_NO_PRIMARY_KEY),
+                                    querySql(SELECT_SINK_SQL, SINK_TABLE));
+                        });
+
+        // insert update delete
+        updateSourceTable(SOURCE_TABLE_NO_PRIMARY_KEY);
+
+        // stream stage
+        await().atMost(60000, TimeUnit.MILLISECONDS)
+                .untilAsserted(
+                        () -> {
+                            Assertions.assertIterableEquals(
+                                    querySql(SELECT_SOURCE_SQL, SOURCE_TABLE_NO_PRIMARY_KEY),
+                                    querySql(SELECT_SINK_SQL, SINK_TABLE));
+                        });
+    }
+
+    @TestTemplate
+    public void testCDCWithCustomPrimaryKey(TestContainer container) {
+        initializeSqlServerTable("column_type_test");
+
+        CompletableFuture<Void> executeJobFuture =
+                CompletableFuture.supplyAsync(
+                        () -> {
+                            try {
+                                container.executeJob(
+                                        "/sqlservercdc_to_sqlserver_with_custom_primary_key.conf");
+                            } catch (Exception e) {
+                                throw new RuntimeException(e);
+                            }
+                            return null;
+                        });
+
+        // snapshot stage
+        await().atMost(60000, TimeUnit.MILLISECONDS)
+                .untilAsserted(
+                        () -> {
+                            Assertions.assertIterableEquals(
+                                    querySql(SELECT_SOURCE_SQL, SOURCE_TABLE_CUSTOM_PRIMARY_KEY),
+                                    querySql(SELECT_SINK_SQL, SINK_TABLE));
+                        });
+
+        // insert update delete
+        updateSourceTable(SOURCE_TABLE_CUSTOM_PRIMARY_KEY);
+
+        // stream stage
+        await().atMost(60000, TimeUnit.MILLISECONDS)
+                .untilAsserted(
+                        () -> {
+                            Assertions.assertIterableEquals(
+                                    querySql(SELECT_SOURCE_SQL, SOURCE_TABLE_CUSTOM_PRIMARY_KEY),
+                                    querySql(SELECT_SINK_SQL, SINK_TABLE));
                         });
     }
 
@@ -186,26 +340,29 @@ public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
         }
     }
 
-    private void updateSourceTable() {
+    private void updateSourceTable(String table) {
         executeSql(
-                "INSERT INTO column_type_test.dbo.full_types VALUES (3,\n"
+                "INSERT INTO "
+                        + table
+                        + " VALUES (3,\n"
                         + "                               'cč3', 'vcč', 'tč', N'cč', N'vcč', N'tč',\n"
                         + "                               1.123, 2, 3.323, 4.323, 5.323, 6.323,\n"
                         + "                               1, 22, 333, 4444, 55555,\n"
                         + "                               '2018-07-13', '10:23:45', '2018-07-13 11:23:45.34', '2018-07-13 13:23:45.78', '2018-07-13 14:23:45',\n"
-                        + "                               '<a>b</a>');");
+                        + "                               '<a>b</a>',SYSDATETIMEOFFSET(),CAST('test_varbinary' AS varbinary(100)), 5.32);");
         executeSql(
-                "INSERT INTO column_type_test.dbo.full_types VALUES (4,\n"
+                "INSERT INTO "
+                        + table
+                        + " VALUES (4,\n"
                         + "                               'cč4', 'vcč', 'tč', N'cč', N'vcč', N'tč',\n"
                         + "                               1.123, 2, 3.323, 4.323, 5.323, 6.323,\n"
                         + "                               1, 22, 333, 4444, 55555,\n"
                         + "                               '2018-07-13', '10:23:45', '2018-07-13 11:23:45.34', '2018-07-13 13:23:45.78', '2018-07-13 14:23:45',\n"
-                        + "                               '<a>b</a>');");
+                        + "                               '<a>b</a>',SYSDATETIMEOFFSET(),CAST('test_varbinary' AS varbinary(100)), 5.32);");
 
-        executeSql("DELETE FROM column_type_test.dbo.full_types where id = 2");
+        executeSql("DELETE FROM " + table + " where id = 2");
 
-        executeSql(
-                "UPDATE column_type_test.dbo.full_types SET val_varchar = 'newvcč' where id = 1");
+        executeSql("UPDATE " + table + " SET val_varchar = 'newvcč' where id = 1");
     }
 
     private Connection getJdbcConnection() throws SQLException {
@@ -215,9 +372,14 @@ public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
                 MSSQL_SERVER_CONTAINER.getPassword());
     }
 
+    private List<List<Object>> querySql(String sql, String table) {
+        return querySql(String.format(sql, table));
+    }
+
     private List<List<Object>> querySql(String sql) {
-        try (Connection connection = getJdbcConnection()) {
-            ResultSet resultSet = connection.createStatement().executeQuery(sql);
+        try (Connection connection = getJdbcConnection();
+                Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery(sql)) {
             List<List<Object>> result = new ArrayList<>();
             int columnCount = resultSet.getMetaData().getColumnCount();
             while (resultSet.next()) {
@@ -284,7 +446,7 @@ public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
                                     connection.createStatement().execute(sql);
                                     return true;
                                 } catch (SQLException e) {
-                                    LOG.warn(
+                                    log.warn(
                                             String.format(
                                                     "DROP DATABASE %s failed (will be retried): {}",
                                                     databaseName),
@@ -297,7 +459,7 @@ public class SqlServerCDCIT extends TestSuiteBase implements TestResource {
                                                                 "ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;",
                                                                 databaseName));
                                     } catch (SQLException e2) {
-                                        LOG.error("Failed to rollbackimmediately", e2);
+                                        log.error("Failed to rollbackimmediately", e2);
                                     }
                                     return false;
                                 }

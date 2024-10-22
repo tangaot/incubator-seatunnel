@@ -21,12 +21,15 @@ import org.apache.seatunnel.engine.common.config.SeaTunnelConfig;
 import org.apache.seatunnel.engine.server.log.Log4j2HttpGetCommandProcessor;
 import org.apache.seatunnel.engine.server.log.Log4j2HttpPostCommandProcessor;
 import org.apache.seatunnel.engine.server.rest.RestHttpGetCommandProcessor;
+import org.apache.seatunnel.engine.server.rest.RestHttpPostCommandProcessor;
 
 import com.hazelcast.cluster.ClusterState;
 import com.hazelcast.instance.impl.DefaultNodeExtension;
 import com.hazelcast.instance.impl.Node;
 import com.hazelcast.internal.ascii.TextCommandService;
 import com.hazelcast.internal.ascii.TextCommandServiceImpl;
+import io.prometheus.client.CollectorRegistry;
+import lombok.Getter;
 import lombok.NonNull;
 
 import java.util.Map;
@@ -36,10 +39,12 @@ import static com.hazelcast.internal.ascii.TextCommandConstants.TextCommandType.
 
 public class NodeExtension extends DefaultNodeExtension {
     private final NodeExtensionCommon extCommon;
+    @Getter private final CollectorRegistry collectorRegistry;
 
     public NodeExtension(@NonNull Node node, @NonNull SeaTunnelConfig seaTunnelConfig) {
         super(node);
         extCommon = new NodeExtensionCommon(node, new SeaTunnelServer(seaTunnelConfig));
+        collectorRegistry = CollectorRegistry.defaultRegistry;
     }
 
     @Override
@@ -79,12 +84,13 @@ public class NodeExtension extends DefaultNodeExtension {
                 register(HTTP_GET, new Log4j2HttpGetCommandProcessor(this));
                 register(HTTP_POST, new Log4j2HttpPostCommandProcessor(this));
                 register(HTTP_GET, new RestHttpGetCommandProcessor(this));
+                register(HTTP_POST, new RestHttpPostCommandProcessor(this));
             }
         };
     }
 
     @Override
     public void printNodeInfo() {
-        extCommon.printNodeInfo(systemLogger, "");
+        extCommon.printNodeInfo(systemLogger);
     }
 }

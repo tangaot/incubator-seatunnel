@@ -27,7 +27,7 @@ import org.apache.seatunnel.api.serialization.Serializer;
 import org.apache.seatunnel.api.sink.SeaTunnelSink;
 import org.apache.seatunnel.api.sink.SinkAggregatedCommitter;
 import org.apache.seatunnel.api.sink.SinkWriter;
-import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
+import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 import org.apache.seatunnel.common.config.CheckConfigUtil;
@@ -66,6 +66,7 @@ import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.Clickh
 import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.NODE_FREE_PASSWORD;
 import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.NODE_PASS;
 import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.PASSWORD;
+import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.SERVER_TIME_ZONE;
 import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.SHARDING_KEY;
 import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.TABLE;
 import static org.apache.seatunnel.connectors.seatunnel.clickhouse.config.ClickhouseConfig.USERNAME;
@@ -114,8 +115,10 @@ public class ClickhouseFileSink
                 ClickhouseUtil.createNodes(
                         config.getString(HOST.key()),
                         config.getString(DATABASE.key()),
+                        config.getString(SERVER_TIME_ZONE.key()),
                         config.getString(USERNAME.key()),
-                        config.getString(PASSWORD.key()));
+                        config.getString(PASSWORD.key()),
+                        null);
 
         ClickhouseProxy proxy = new ClickhouseProxy(nodes.get(0));
         Map<String, String> tableSchema =
@@ -190,11 +193,6 @@ public class ClickhouseFileSink
     }
 
     @Override
-    public SeaTunnelDataType<SeaTunnelRow> getConsumedType() {
-        return this.readerOption.getSeaTunnelRowType();
-    }
-
-    @Override
     public SinkWriter<SeaTunnelRow, CKFileCommitInfo, ClickhouseSinkState> createWriter(
             SinkWriter.Context context) throws IOException {
         return new ClickhouseFileSinkWriter(readerOption, context);
@@ -214,5 +212,10 @@ public class ClickhouseFileSink
     @Override
     public Optional<Serializer<CKFileAggCommitInfo>> getAggregatedCommitInfoSerializer() {
         return Optional.of(new DefaultSerializer<>());
+    }
+
+    @Override
+    public Optional<CatalogTable> getWriteCatalogTable() {
+        return SeaTunnelSink.super.getWriteCatalogTable();
     }
 }

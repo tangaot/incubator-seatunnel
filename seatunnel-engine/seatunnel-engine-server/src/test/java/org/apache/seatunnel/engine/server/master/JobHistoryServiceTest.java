@@ -40,9 +40,9 @@ import static org.awaitility.Awaitility.await;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class JobHistoryServiceTest extends AbstractSeaTunnelServerTest {
 
-    private static final Long JOB_1 = 1L;
-    private static final Long JOB_2 = 2L;
-    private static final Long JOB_3 = 3L;
+    private static final Long JOB_1 = System.currentTimeMillis() + 1L;
+    private static final Long JOB_2 = System.currentTimeMillis() + 2L;
+    private static final Long JOB_3 = System.currentTimeMillis() + 3L;
 
     @Test
     public void testlistJobState() throws Exception {
@@ -137,12 +137,14 @@ class JobHistoryServiceTest extends AbstractSeaTunnelServerTest {
                         "Test",
                         nodeEngine.getSerializationService().toData(testLogicalDag),
                         testLogicalDag.getJobConfig(),
+                        Collections.emptyList(),
                         Collections.emptyList());
 
         Data data = nodeEngine.getSerializationService().toData(jobImmutableInformation);
 
         PassiveCompletableFuture<Void> voidPassiveCompletableFuture =
-                server.getCoordinatorService().submitJob(jobid, data);
+                server.getCoordinatorService()
+                        .submitJob(jobid, data, jobImmutableInformation.isStartWithSavePoint());
         voidPassiveCompletableFuture.join();
     }
 }

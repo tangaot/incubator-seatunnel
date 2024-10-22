@@ -75,7 +75,6 @@ public class SeaTunnelHealthMonitor {
         return format("%.2f%%", p);
     }
 
-    @SuppressWarnings("checkstyle:magicnumber")
     private static String numberToUnit(long number) {
         for (int i = 6; i > 0; i--) {
             // 1024 is for 1024 kb is 1 MB etc
@@ -203,6 +202,8 @@ public class SeaTunnelHealthMonitor {
         public String render() {
             update();
             sb.setLength(0);
+            isMasterFlag();
+            ipPort();
             renderProcessors();
             renderPhysicalMemory();
             renderSwap();
@@ -219,6 +220,15 @@ public class SeaTunnelHealthMonitor {
             renderClient();
             renderConnection();
             return sb.toString();
+        }
+
+        private void ipPort() {
+            sb.append("host=").append(node.address.getHost()).append(", ");
+            sb.append("port=").append(node.address.getPort()).append(", ");
+        }
+
+        private void isMasterFlag() {
+            sb.append("isMaster=").append(node.isMaster()).append(", ");
         }
 
         private void renderConnection() {
@@ -282,7 +292,6 @@ public class SeaTunnelHealthMonitor {
                     .append(", ");
         }
 
-        @SuppressWarnings("checkstyle:UnnecessaryParentheses")
         private void renderHeap() {
             sb.append("heap.memory.used=")
                     .append(numberToUnit(runtimeUsedMemory.read()))

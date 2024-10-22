@@ -22,14 +22,6 @@ def get_cv2_modules(files):
     get_modules(files, 1, "connector-", "seatunnel-connectors-v2")
 
 
-def get_cv2_flink_e2e_modules(files):
-    get_modules(files, 2, "connector-", "seatunnel-flink-connector-v2-e2e")
-
-
-def get_cv2_spark_e2e_modules(files):
-    get_modules(files, 2, "connector-", "seatunnel-spark-connector-v2-e2e")
-
-
 def get_cv2_e2e_modules(files):
     get_modules(files, 2, "connector-", "seatunnel-connector-v2-e2e")
 
@@ -148,26 +140,59 @@ def get_deleted_modules(files):
     output_module = output_module[1:len(output_module)]
     print(output_module)
 
+
 def get_sub_it_modules(modules, total_num, current_num):
     modules_arr = modules.split(",")
     modules_arr.remove("connector-jdbc-e2e")
+    modules_arr.remove("connector-kafka-e2e")
+    modules_arr.remove("connector-rocketmq-e2e")
+    modules_arr.remove("connector-kudu-e2e")
+    modules_arr.remove("connector-amazonsqs-e2e")
+    modules_arr.remove("connector-doris-e2e")
+    modules_arr.remove("connector-paimon-e2e")
+    modules_arr.remove("connector-cdc-oracle-e2e")
     output = ""
-    for i,module in enumerate(modules_arr):
+    for i, module in enumerate(modules_arr):
         if len(module) > 0 and i % int(total_num) == int(current_num):
             output = output + ",:" + module
 
     output = output[1:len(output)]
     print(output)
 
+
+def get_sub_update_it_modules(modules, total_num, current_num):
+    final_modules = list()
+    # :connector-jdbc-e2e-common,:connector-jdbc-e2e-part-1 --> connector-jdbc-e2e-common,:connector-jdbc-e2e-part-1
+    modules = modules[1:]
+    # connector-jdbc-e2e-common,:connector-jdbc-e2e-part-1 --> [connector-jdbc-e2e-common, connector-jdbc-e2e-part-1]
+    module_list = modules.split(",:")
+    if "connector-kudu-e2e" in module_list:
+        module_list.remove("connector-kudu-e2e")
+    if "connector-amazonsqs-e2e" in module_list:
+        module_list.remove("connector-amazonsqs-e2e")
+    if "connector-kafka-e2e" in module_list:
+        module_list.remove("connector-kafka-e2e")
+    if "connector-rocketmq-e2e" in module_list:
+        module_list.remove("connector-rocketmq-e2e")
+    if "seatunnel-engine-k8s-e2e" in module_list:
+        module_list.remove("seatunnel-engine-k8s-e2e")
+    if "connector-doris-e2e" in module_list:
+        module_list.remove("connector-doris-e2e")
+    if "connector-paimon-e2e" in module_list:
+        module_list.remove("connector-paimon-e2e")
+    if "connector-cdc-oracle-e2e" in module_list:
+        module_list.remove("connector-cdc-oracle-e2e")
+    for i, module in enumerate(module_list):
+        if len(module) > 0 and i % int(total_num) == int(current_num):
+            final_modules.append(":" + module)
+    print(",".join(final_modules))
+
+
 def main(argv):
     if argv[1] == "cv2":
         get_cv2_modules(argv[2])
     elif argv[1] == "cv2-e2e":
         get_cv2_e2e_modules(argv[2])
-    elif argv[1] == "cv2-flink-e2e":
-        get_cv2_flink_e2e_modules(argv[2])
-    elif argv[1] == "cv2-spark-e2e":
-        get_cv2_spark_e2e_modules(argv[2])
     elif argv[1] == "engine":
         get_engine_modules(argv[2])
     elif argv[1] == "engine-e2e":
@@ -188,6 +213,8 @@ def main(argv):
         remove_deleted_modules(argv[2], argv[3])
     elif argv[1] == "sub_it_module":
         get_sub_it_modules(argv[2], argv[3], argv[4])
+    elif argv[1] == "sub_update_it_module":
+        get_sub_update_it_modules(argv[2], argv[3], argv[4])
 
 
 if __name__ == "__main__":

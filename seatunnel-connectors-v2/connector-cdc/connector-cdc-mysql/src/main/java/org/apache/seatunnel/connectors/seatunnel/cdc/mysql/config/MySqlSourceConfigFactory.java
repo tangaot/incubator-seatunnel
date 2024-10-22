@@ -39,8 +39,8 @@ public class MySqlSourceConfigFactory extends JdbcSourceConfigFactory {
      * required when 'scan.incremental.snapshot.enabled' enabled. Every ID must be unique across all
      * currently-running database processes in the MySQL cluster. This connector joins the MySQL
      * cluster as another server (with this unique ID) so it can read the binlog. By default, a
-     * random number is generated between 5400 and 6400, though we recommend setting an explicit
-     * value."
+     * random number is generated between 6500 and 2,148,492,146, though we recommend setting an
+     * explicit value."
      */
     public MySqlSourceConfigFactory serverId(String serverId) {
         this.serverIdRange = ServerIdRange.from(serverId);
@@ -76,7 +76,8 @@ public class MySqlSourceConfigFactory extends JdbcSourceConfigFactory {
         // Note: the includeSchemaChanges parameter is used to control emitting the schema record,
         // only DataStream API program need to emit the schema record, the Table API need not
 
-        // TODO Not yet supported
+        // Some scenarios do not require automatic capture of table structure changes, so the
+        // default setting is false.
         props.setProperty("include.schema.changes", String.valueOf(false));
         // disable the offset flush totally
         props.setProperty("offset.flush.interval.ms", String.valueOf(Long.MAX_VALUE));
@@ -89,7 +90,7 @@ public class MySqlSourceConfigFactory extends JdbcSourceConfigFactory {
 
         if (serverIdRange != null) {
             props.setProperty("database.server.id.range", String.valueOf(serverIdRange));
-            int serverId = serverIdRange.getServerId(subtaskId);
+            long serverId = serverIdRange.getServerId(subtaskId);
             props.setProperty("database.server.id", String.valueOf(serverId));
         }
         if (databaseList != null) {
@@ -117,6 +118,8 @@ public class MySqlSourceConfigFactory extends JdbcSourceConfigFactory {
                 splitSize,
                 distributionFactorUpper,
                 distributionFactorLower,
+                sampleShardingThreshold,
+                inverseSamplingRate,
                 props,
                 driverClassName,
                 hostname,
@@ -128,6 +131,7 @@ public class MySqlSourceConfigFactory extends JdbcSourceConfigFactory {
                 serverTimeZone,
                 connectTimeoutMillis,
                 connectMaxRetries,
-                connectionPoolSize);
+                connectionPoolSize,
+                exactlyOnce);
     }
 }

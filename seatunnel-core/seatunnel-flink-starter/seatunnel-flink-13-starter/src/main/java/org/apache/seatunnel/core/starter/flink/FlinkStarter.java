@@ -20,6 +20,7 @@ package org.apache.seatunnel.core.starter.flink;
 import org.apache.seatunnel.common.config.Common;
 import org.apache.seatunnel.core.starter.Starter;
 import org.apache.seatunnel.core.starter.enums.EngineType;
+import org.apache.seatunnel.core.starter.enums.MasterType;
 import org.apache.seatunnel.core.starter.flink.args.FlinkCommandArgs;
 import org.apache.seatunnel.core.starter.utils.CommandLineUtils;
 
@@ -32,6 +33,7 @@ public class FlinkStarter implements Starter {
     private static final String APP_NAME = SeaTunnelFlink.class.getName();
     public static final String APP_JAR_NAME = EngineType.FLINK13.getStarterJarName();
     public static final String SHELL_NAME = EngineType.FLINK13.getStarterShellName();
+    public static final String RUNTIME_FILE = "runtime.tar.gz";
     private final FlinkCommandArgs flinkCommandArgs;
     private final String appJar;
 
@@ -44,7 +46,6 @@ public class FlinkStarter implements Starter {
         this.appJar = Common.appStarterDir().resolve(APP_JAR_NAME).toString();
     }
 
-    @SuppressWarnings("checkstyle:RegexpSingleline")
     public static void main(String[] args) {
         FlinkStarter flinkStarter = new FlinkStarter(args);
         System.out.println(String.join(" ", flinkStarter.buildCommands()));
@@ -61,6 +62,18 @@ public class FlinkStarter implements Starter {
         if (flinkCommandArgs.getMasterType() != null) {
             command.add("--target");
             command.add(flinkCommandArgs.getMasterType().getMaster());
+        }
+        // set yarn application mode parameters
+        if (flinkCommandArgs.getMasterType() == MasterType.YARN_APPLICATION) {
+            command.add(
+                    String.format("-Dyarn.ship-files=\"%s\"", flinkCommandArgs.getConfigFile()));
+            command.add(String.format("-Dyarn.ship-archives=%s", RUNTIME_FILE));
+        }
+        // set yarn application name
+        if (flinkCommandArgs.getMasterType() == MasterType.YARN_APPLICATION
+                || flinkCommandArgs.getMasterType() == MasterType.YARN_PER_JOB
+                || flinkCommandArgs.getMasterType() == MasterType.YARN_SESSION) {
+            command.add(String.format("-Dyarn.application.name=%s", flinkCommandArgs.getJobName()));
         }
         // set flink original parameters
         command.addAll(flinkCommandArgs.getOriginalParameters());
@@ -79,11 +92,22 @@ public class FlinkStarter implements Starter {
         // set job name
         command.add("--name");
         command.add(flinkCommandArgs.getJobName());
+        // set encryption
+        if (flinkCommandArgs.isEncrypt()) {
+            command.add("--encrypt");
+        }
+        // set decryption
+        if (flinkCommandArgs.isDecrypt()) {
+            command.add("--decrypt");
+        }
+        // set deploy mode
+        command.add("--deploy-mode");
+        command.add(flinkCommandArgs.getDeployMode().getDeployMode());
         // set extra system properties
         flinkCommandArgs.getVariables().stream()
                 .filter(Objects::nonNull)
                 .map(String::trim)
-                .forEach(variable -> command.add("-D" + variable));
+                .forEach(variable -> command.add("-i " + variable));
         return command;
     }
 }

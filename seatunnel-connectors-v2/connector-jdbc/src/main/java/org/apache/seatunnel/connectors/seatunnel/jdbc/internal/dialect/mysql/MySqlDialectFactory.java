@@ -17,10 +17,14 @@
 
 package org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.mysql;
 
+import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.DatabaseIdentifier;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.JdbcDialect;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.JdbcDialectFactory;
+import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.starrocks.StarRocksDialect;
 
 import com.google.auto.service.AutoService;
+
+import javax.annotation.Nonnull;
 
 /** Factory for {@link MysqlDialect}. */
 @AutoService(JdbcDialectFactory.class)
@@ -33,5 +37,13 @@ public class MySqlDialectFactory implements JdbcDialectFactory {
     @Override
     public JdbcDialect create() {
         return new MysqlDialect();
+    }
+
+    @Override
+    public JdbcDialect create(@Nonnull String compatibleMode, String fieldIde) {
+        if (DatabaseIdentifier.STARROCKS.equalsIgnoreCase(compatibleMode)) {
+            return new StarRocksDialect(fieldIde);
+        }
+        return new MysqlDialect(fieldIde);
     }
 }

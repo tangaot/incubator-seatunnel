@@ -17,20 +17,21 @@
 
 package org.apache.seatunnel.connectors.seatunnel.file.sink.writer;
 
+import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
-import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 import org.apache.seatunnel.connectors.seatunnel.file.config.HadoopConf;
 import org.apache.seatunnel.connectors.seatunnel.file.exception.FileConnectorException;
+import org.apache.seatunnel.connectors.seatunnel.file.hadoop.HadoopFileSystemProxy;
 import org.apache.seatunnel.connectors.seatunnel.file.sink.config.FileSinkConfig;
-import org.apache.seatunnel.connectors.seatunnel.file.sink.util.FileSystemUtils;
 
 import org.apache.hadoop.conf.Configuration;
 
+import java.io.Closeable;
 import java.io.Serializable;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
-public interface WriteStrategy extends Transaction, Serializable {
+public interface WriteStrategy extends Transaction, Serializable, Closeable {
     /**
      * init hadoop conf
      *
@@ -55,11 +56,11 @@ public interface WriteStrategy extends Transaction, Serializable {
     void write(SeaTunnelRow seaTunnelRow) throws FileConnectorException;
 
     /**
-     * set seaTunnelRowTypeInfo in writer
+     * set catalog table to write strategy
      *
-     * @param seaTunnelRowType seaTunnelRowType
+     * @param catalogTable catalogTable
      */
-    void setSeaTunnelRowTypeInfo(SeaTunnelRowType seaTunnelRowType);
+    void setCatalogTable(CatalogTable catalogTable);
 
     /**
      * use seaTunnelRow generate partition directory
@@ -67,7 +68,7 @@ public interface WriteStrategy extends Transaction, Serializable {
      * @param seaTunnelRow seaTunnelRow
      * @return the map of partition directory
      */
-    Map<String, List<String>> generatorPartitionDir(SeaTunnelRow seaTunnelRow);
+    LinkedHashMap<String, List<String>> generatorPartitionDir(SeaTunnelRow seaTunnelRow);
 
     /**
      * use transaction id generate file name
@@ -99,12 +100,5 @@ public interface WriteStrategy extends Transaction, Serializable {
      *
      * @return file system utils
      */
-    FileSystemUtils getFileSystemUtils();
-
-    /**
-     * set file system utils
-     *
-     * @param fileSystemUtils fileSystemUtils
-     */
-    void setFileSystemUtils(FileSystemUtils fileSystemUtils);
+    HadoopFileSystemProxy getHadoopFileSystemProxy();
 }

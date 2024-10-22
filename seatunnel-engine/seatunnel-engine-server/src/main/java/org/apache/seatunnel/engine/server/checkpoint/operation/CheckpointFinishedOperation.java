@@ -17,8 +17,10 @@
 
 package org.apache.seatunnel.engine.server.checkpoint.operation;
 
+import org.apache.seatunnel.common.utils.ExceptionUtils;
 import org.apache.seatunnel.common.utils.RetryUtils;
 import org.apache.seatunnel.engine.common.Constant;
+import org.apache.seatunnel.engine.common.exception.SeaTunnelEngineException;
 import org.apache.seatunnel.engine.server.SeaTunnelServer;
 import org.apache.seatunnel.engine.server.exception.TaskGroupContextNotFoundException;
 import org.apache.seatunnel.engine.server.execution.Task;
@@ -33,8 +35,6 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.io.IOException;
-
-import static org.apache.seatunnel.engine.common.utils.ExceptionUtil.sneakyThrow;
 
 @Getter
 @NoArgsConstructor
@@ -76,7 +76,7 @@ public class CheckpointFinishedOperation extends TaskOperation {
     }
 
     @Override
-    public void run() throws Exception {
+    public void runInternal() throws Exception {
         SeaTunnelServer server = getService();
         RetryUtils.retryWithException(
                 () -> {
@@ -86,7 +86,9 @@ public class CheckpointFinishedOperation extends TaskOperation {
                                         .getExecutionContext(taskLocation.getTaskGroupLocation());
                         Task task = groupContext.getTaskGroup().getTask(taskLocation.getTaskID());
                         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-                        Thread.currentThread().setContextClassLoader(groupContext.getClassLoader());
+                        Thread.currentThread()
+                                .setContextClassLoader(
+                                        groupContext.getClassLoader(taskLocation.getTaskID()));
                         if (successful) {
                             task.notifyCheckpointComplete(checkpointId);
                         } else {
@@ -94,13 +96,13 @@ public class CheckpointFinishedOperation extends TaskOperation {
                         }
                         Thread.currentThread().setContextClassLoader(classLoader);
                     } catch (Exception e) {
-                        sneakyThrow(e);
+                        throw new SeaTunnelEngineException(ExceptionUtils.getMessage(e));
                     }
                     return null;
                 },
                 new RetryUtils.RetryMaterial(
                         Constant.OPERATION_RETRY_TIME,
-                        false,
+                        true,
                         exception ->
                                 exception instanceof TaskGroupContextNotFoundException
                                         && !server.taskIsEnded(taskLocation.getTaskGroupLocation()),

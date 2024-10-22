@@ -18,6 +18,8 @@
 package org.apache.seatunnel.engine.server;
 
 import org.apache.seatunnel.engine.common.Constant;
+import org.apache.seatunnel.engine.common.config.ConfigProvider;
+import org.apache.seatunnel.engine.common.config.SeaTunnelConfig;
 import org.apache.seatunnel.engine.common.exception.SeaTunnelEngineException;
 import org.apache.seatunnel.engine.core.dag.logical.LogicalDag;
 import org.apache.seatunnel.engine.core.job.JobImmutableInformation;
@@ -27,13 +29,11 @@ import org.apache.seatunnel.engine.core.job.PipelineStatus;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import org.junitpioneer.jupiter.SetEnvironmentVariable;
 
 import com.hazelcast.instance.impl.HazelcastInstanceImpl;
 import com.hazelcast.internal.serialization.Data;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.net.MalformedURLException;
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
@@ -82,11 +82,8 @@ public class CoordinatorServiceTest {
         instance2.shutdown();
     }
 
-    @SuppressWarnings("checkstyle:RegexpSingleline")
     @Test
-    public void testClearCoordinatorService()
-            throws MalformedURLException, NoSuchMethodException, InvocationTargetException,
-                    IllegalAccessException {
+    public void testClearCoordinatorService() {
         HazelcastInstanceImpl coordinatorServiceTest =
                 SeaTunnelServerStarter.createHazelcastInstance(
                         TestUtils.getClusterName(
@@ -105,7 +102,7 @@ public class CoordinatorServiceTest {
                         .newId();
         LogicalDag testLogicalDag =
                 TestUtils.createTestLogicalPlan(
-                        "stream_fakesource_to_file.conf", "test_clear_coordinator_service", jobId);
+                        "stream_fake_to_console.conf", "test_clear_coordinator_service", jobId);
 
         JobImmutableInformation jobImmutableInformation =
                 new JobImmutableInformation(
@@ -113,12 +110,15 @@ public class CoordinatorServiceTest {
                         "Test",
                         coordinatorServiceTest.getSerializationService().toData(testLogicalDag),
                         testLogicalDag.getJobConfig(),
+                        Collections.emptyList(),
                         Collections.emptyList());
 
         Data data =
                 coordinatorServiceTest.getSerializationService().toData(jobImmutableInformation);
 
-        coordinatorService.submitJob(jobId, data).join();
+        coordinatorService
+                .submitJob(jobId, data, jobImmutableInformation.isStartWithSavePoint())
+                .join();
 
         // waiting for job status turn to running
         await().atMost(10000, TimeUnit.MILLISECONDS)
@@ -127,15 +127,17 @@ public class CoordinatorServiceTest {
                                 Assertions.assertEquals(
                                         JobStatus.RUNNING, coordinatorService.getJobStatus(jobId)));
 
-        Class<CoordinatorService> clazz = CoordinatorService.class;
-        Method clearCoordinatorServiceMethod =
-                clazz.getDeclaredMethod("clearCoordinatorService", null);
-        clearCoordinatorServiceMethod.setAccessible(true);
-        clearCoordinatorServiceMethod.invoke(coordinatorService, null);
-        clearCoordinatorServiceMethod.setAccessible(false);
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
 
-        // because runningJobMasterMap is empty and we have no JobHistoryServer, so return finished.
-        Assertions.assertTrue(JobStatus.RUNNING.equals(coordinatorService.getJobStatus(jobId)));
+        coordinatorService.clearCoordinatorService();
+
+        // because runningJobMasterMap is empty and we have no JobHistoryServer, so return
+        // UNKNOWABLE.
+        Assertions.assertTrue(JobStatus.UNKNOWABLE.equals(coordinatorService.getJobStatus(jobId)));
         coordinatorServiceTest.shutdown();
     }
 
@@ -172,11 +174,14 @@ public class CoordinatorServiceTest {
                         "Test",
                         instance1.getSerializationService().toData(testLogicalDag),
                         testLogicalDag.getJobConfig(),
+                        Collections.emptyList(),
                         Collections.emptyList());
 
         Data data = instance1.getSerializationService().toData(jobImmutableInformation);
 
-        coordinatorService.submitJob(jobId, data).join();
+        coordinatorService
+                .submitJob(jobId, data, jobImmutableInformation.isStartWithSavePoint())
+                .join();
 
         // waiting for job status turn to running
         await().atMost(20000, TimeUnit.MILLISECONDS)
@@ -235,5 +240,29 @@ public class CoordinatorServiceTest {
                                         JobStatus.CANCELED,
                                         server2.getCoordinatorService().getJobStatus(jobId)));
         instance2.shutdown();
+    }
+
+    @Test
+    @SetEnvironmentVariable(
+            key = "ST_DOCKER_MEMBER_LIST",
+            value = "127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4")
+    public void testDockerEnvOverwrite() {
+        SeaTunnelConfig seaTunnelConfig = ConfigProvider.locateAndGetSeaTunnelConfig();
+        if (seaTunnelConfig
+                .getHazelcastConfig()
+                .getNetworkConfig()
+                .getJoin()
+                .getTcpIpConfig()
+                .isEnabled()) {
+            Assertions.assertEquals(
+                    4,
+                    seaTunnelConfig
+                            .getHazelcastConfig()
+                            .getNetworkConfig()
+                            .getJoin()
+                            .getTcpIpConfig()
+                            .getMembers()
+                            .size());
+        }
     }
 }

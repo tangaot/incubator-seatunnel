@@ -6,13 +6,13 @@
 
 Write data to Amazon DynamoDB
 
-## Key features
+## Key Features
 
 - [ ] [exactly-once](../../concept/connector-v2-features.md)
 
 ## Options
 
-|       name        |  type  | required | default value |
+|       Name        |  Type  | Required | Default value |
 |-------------------|--------|----------|---------------|
 | url               | string | yes      | -             |
 | region            | string | yes      | -             |
@@ -20,7 +20,6 @@ Write data to Amazon DynamoDB
 | secret_access_key | string | yes      | -             |
 | table             | string | yes      | -             |
 | batch_size        | string | no       | 25            |
-| batch_interval_ms | string | no       | 1000          |
 | common-options    |        | no       | -             |
 
 ### url [string]
@@ -45,7 +44,7 @@ The table of Amazon DynamoDB.
 
 ### common options
 
-Sink plugin common parameters, please refer to [Sink Common Options](common-options.md) for details.
+Sink plugin common parameters, please refer to [Sink Common Options](../sink-common-options.md) for details.
 
 ## Example
 

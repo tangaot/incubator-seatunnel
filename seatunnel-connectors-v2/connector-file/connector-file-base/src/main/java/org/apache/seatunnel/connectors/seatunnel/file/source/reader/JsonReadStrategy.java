@@ -17,31 +17,54 @@
 
 package org.apache.seatunnel.connectors.seatunnel.file.source.reader;
 
+import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.serialization.DeserializationSchema;
 import org.apache.seatunnel.api.source.Collector;
+import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
-import org.apache.seatunnel.common.exception.CommonErrorCode;
+import org.apache.seatunnel.common.exception.CommonErrorCodeDeprecated;
+import org.apache.seatunnel.connectors.seatunnel.file.config.BaseSourceConfigOptions;
+import org.apache.seatunnel.connectors.seatunnel.file.config.CompressFormat;
+import org.apache.seatunnel.connectors.seatunnel.file.config.FileFormat;
 import org.apache.seatunnel.connectors.seatunnel.file.config.HadoopConf;
+import org.apache.seatunnel.connectors.seatunnel.file.exception.FileConnectorErrorCode;
 import org.apache.seatunnel.connectors.seatunnel.file.exception.FileConnectorException;
 import org.apache.seatunnel.format.json.JsonDeserializationSchema;
 
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
+import io.airlift.compress.lzo.LzopCodec;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
+@Slf4j
 public class JsonReadStrategy extends AbstractReadStrategy {
     private DeserializationSchema<SeaTunnelRow> deserializationSchema;
+    private CompressFormat compressFormat = BaseSourceConfigOptions.COMPRESS_CODEC.defaultValue();
+    private String encoding = BaseSourceConfigOptions.ENCODING.defaultValue();
 
     @Override
-    public void setSeaTunnelRowTypeInfo(SeaTunnelRowType seaTunnelRowType) {
-        super.setSeaTunnelRowTypeInfo(seaTunnelRowType);
+    public void init(HadoopConf conf) {
+        super.init(conf);
+        if (pluginConfig.hasPath(BaseSourceConfigOptions.COMPRESS_CODEC.key())) {
+            String compressCodec =
+                    pluginConfig.getString(BaseSourceConfigOptions.COMPRESS_CODEC.key());
+            compressFormat = CompressFormat.valueOf(compressCodec.toUpperCase());
+        }
+        encoding =
+                ReadonlyConfig.fromConfig(pluginConfig)
+                        .getOptional(BaseSourceConfigOptions.ENCODING)
+                        .orElse(StandardCharsets.UTF_8.name());
+    }
+
+    @Override
+    public void setCatalogTable(CatalogTable catalogTable) {
+        super.setCatalogTable(catalogTable);
         if (isMergePartition) {
             deserializationSchema =
                     new JsonDeserializationSchema(false, false, this.seaTunnelRowTypeWithPartition);
@@ -52,45 +75,72 @@ public class JsonReadStrategy extends AbstractReadStrategy {
     }
 
     @Override
-    public void read(String path, Collector<SeaTunnelRow> output)
+    public void read(String path, String tableId, Collector<SeaTunnelRow> output)
             throws FileConnectorException, IOException {
-        Configuration conf = getConfiguration();
-        FileSystem fs = FileSystem.get(conf);
-        Path filePath = new Path(path);
         Map<String, String> partitionsMap = parsePartitionsByPath(path);
+        resolveArchiveCompressedInputStream(path, tableId, output, partitionsMap, FileFormat.JSON);
+    }
+
+    @Override
+    public void readProcess(
+            String path,
+            String tableId,
+            Collector<SeaTunnelRow> output,
+            InputStream inputStream,
+            Map<String, String> partitionsMap,
+            String currentFileName)
+            throws IOException {
+        InputStream actualInputStream;
+        switch (compressFormat) {
+            case LZO:
+                LzopCodec lzo = new LzopCodec();
+                actualInputStream = lzo.createInputStream(inputStream);
+                break;
+            case NONE:
+                actualInputStream = inputStream;
+                break;
+            default:
+                log.warn(
+                        "Json file does not support this compress type: {}",
+                        compressFormat.getCompressCodec());
+                actualInputStream = inputStream;
+                break;
+        }
         try (BufferedReader reader =
-                new BufferedReader(
-                        new InputStreamReader(fs.open(filePath), StandardCharsets.UTF_8))) {
+                new BufferedReader(new InputStreamReader(actualInputStream, encoding))) {
             reader.lines()
                     .forEach(
                             line -> {
                                 try {
                                     SeaTunnelRow seaTunnelRow =
-                                            deserializationSchema.deserialize(line.getBytes());
+                                            deserializationSchema.deserialize(
+                                                    line.getBytes(StandardCharsets.UTF_8));
                                     if (isMergePartition) {
                                         int index = seaTunnelRowType.getTotalFields();
                                         for (String value : partitionsMap.values()) {
                                             seaTunnelRow.setField(index++, value);
                                         }
                                     }
+                                    seaTunnelRow.setTableId(tableId);
                                     output.collect(seaTunnelRow);
                                 } catch (IOException e) {
                                     String errorMsg =
                                             String.format(
-                                                    "Read data from this file [%s] failed",
-                                                    filePath);
+                                                    "Deserialize this jsonFile data [%s] failed, please check the origin data",
+                                                    line);
                                     throw new FileConnectorException(
-                                            CommonErrorCode.FILE_OPERATION_FAILED, errorMsg);
+                                            FileConnectorErrorCode.DATA_DESERIALIZE_FAILED,
+                                            errorMsg,
+                                            e);
                                 }
                             });
         }
     }
 
     @Override
-    public SeaTunnelRowType getSeaTunnelRowTypeInfo(HadoopConf hadoopConf, String path)
-            throws FileConnectorException {
+    public SeaTunnelRowType getSeaTunnelRowTypeInfo(String path) throws FileConnectorException {
         throw new FileConnectorException(
-                CommonErrorCode.UNSUPPORTED_OPERATION,
+                CommonErrorCodeDeprecated.UNSUPPORTED_OPERATION,
                 "User must defined schema for json file type");
     }
 }

@@ -19,6 +19,8 @@ package org.apache.seatunnel.common.config;
 
 import org.apache.commons.lang3.StringUtils;
 
+import com.google.common.annotations.VisibleForTesting;
+
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
@@ -37,6 +39,8 @@ import static java.nio.file.FileVisitOption.FOLLOW_LINKS;
 
 public class Common {
 
+    private static final String FLINK_YARN_APPLICATION_PATH = "runtime.tar.gz";
+
     private Common() {
         throw new IllegalStateException("Utility class");
     }
@@ -48,7 +52,7 @@ public class Common {
 
     private static final int PLUGIN_LIB_DIR_DEPTH = 3;
 
-    private static DeployMode MODE;
+    private static DeployMode MODE = DeployMode.CLIENT;
 
     private static String SEATUNNEL_HOME;
 
@@ -67,7 +71,7 @@ public class Common {
         return MODE;
     }
 
-    private static String getSeaTunnelHome() {
+    public static String getSeaTunnelHome() {
 
         if (StringUtils.isNotEmpty(SEATUNNEL_HOME)) {
             return SEATUNNEL_HOME;
@@ -81,6 +85,11 @@ public class Common {
         }
         SEATUNNEL_HOME = seatunnelHome;
         return SEATUNNEL_HOME;
+    }
+
+    @VisibleForTesting
+    public static void setSeaTunnelHome(String seatunnelHome) {
+        SEATUNNEL_HOME = seatunnelHome;
     }
 
     /**
@@ -106,8 +115,10 @@ public class Common {
             } catch (URISyntaxException e) {
                 throw new RuntimeException(e);
             }
-        } else if (DeployMode.CLUSTER == MODE || DeployMode.RUN_APPLICATION == MODE) {
+        } else if (DeployMode.CLUSTER == MODE) {
             return Paths.get("");
+        } else if (DeployMode.RUN_APPLICATION == MODE) {
+            return Paths.get(FLINK_YARN_APPLICATION_PATH);
         } else {
             throw new IllegalStateException("deploy mode not support : " + MODE);
         }
@@ -120,11 +131,6 @@ public class Common {
     /** Plugin Root Dir */
     public static Path pluginRootDir() {
         return Paths.get(getSeaTunnelHome(), "plugins");
-    }
-
-    /** Plugin Connector Jar Dir */
-    public static Path connectorJarDir(String engine) {
-        return Paths.get(getSeaTunnelHome(), "connectors", engine.toLowerCase());
     }
 
     /** Plugin Connector Dir */

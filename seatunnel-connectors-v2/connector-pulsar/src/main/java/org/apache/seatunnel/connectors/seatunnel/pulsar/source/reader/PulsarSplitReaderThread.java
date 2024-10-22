@@ -81,6 +81,7 @@ public class PulsarSplitReaderThread extends Thread implements Closeable {
         if (split.getLatestConsumedId() == null) {
             startCursor.seekPosition(consumer);
         }
+        this.running = true;
     }
 
     @Override
@@ -95,10 +96,12 @@ public class PulsarSplitReaderThread extends Thread implements Closeable {
                         sourceReader.handleNoMoreElements(split.splitId(), message.getMessageId());
                         break;
                     }
+                } else {
+                    Thread.sleep(pollInterval);
                 }
-                Thread.sleep(pollInterval);
             }
         } catch (Throwable t) {
+            LOG.error("Pulsar Consumer receive data error", t);
             handover.reportError(t);
         } finally {
             // make sure the PulsarConsumer is closed
@@ -106,6 +109,8 @@ public class PulsarSplitReaderThread extends Thread implements Closeable {
                 consumer.close();
             } catch (Throwable t) {
                 LOG.warn("Error while closing pulsar consumer", t);
+            } finally {
+                running = false;
             }
         }
     }

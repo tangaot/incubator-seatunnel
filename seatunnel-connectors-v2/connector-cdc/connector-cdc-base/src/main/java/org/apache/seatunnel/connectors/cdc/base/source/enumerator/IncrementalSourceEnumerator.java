@@ -20,6 +20,7 @@ package org.apache.seatunnel.connectors.cdc.base.source.enumerator;
 import org.apache.seatunnel.api.source.SourceEvent;
 import org.apache.seatunnel.api.source.SourceSplitEnumerator;
 import org.apache.seatunnel.connectors.cdc.base.source.enumerator.state.PendingSplitsState;
+import org.apache.seatunnel.connectors.cdc.base.source.event.CompletedSnapshotPhaseEvent;
 import org.apache.seatunnel.connectors.cdc.base.source.event.CompletedSnapshotSplitsAckEvent;
 import org.apache.seatunnel.connectors.cdc.base.source.event.CompletedSnapshotSplitsReportEvent;
 import org.apache.seatunnel.connectors.cdc.base.source.event.SnapshotSplitWatermark;
@@ -109,7 +110,9 @@ public class IncrementalSourceEnumerator
                     (CompletedSnapshotSplitsReportEvent) sourceEvent;
             List<SnapshotSplitWatermark> completedSplitWatermarks =
                     reportEvent.getCompletedSnapshotSplitWatermarks();
-            splitAssigner.onCompletedSplits(completedSplitWatermarks);
+            synchronized (context) {
+                splitAssigner.onCompletedSplits(completedSplitWatermarks);
+            }
 
             // send acknowledge event
             CompletedSnapshotSplitsAckEvent ackEvent =
@@ -118,6 +121,17 @@ public class IncrementalSourceEnumerator
                                     .map(SnapshotSplitWatermark::getSplitId)
                                     .collect(Collectors.toList()));
             context.sendEventToSourceReader(subtaskId, ackEvent);
+        } else if (sourceEvent instanceof CompletedSnapshotPhaseEvent) {
+            LOG.debug(
+                    "The enumerator receives completed snapshot phase event {} from subtask {}.",
+                    sourceEvent,
+                    subtaskId);
+            CompletedSnapshotPhaseEvent event = (CompletedSnapshotPhaseEvent) sourceEvent;
+            if (splitAssigner instanceof HybridSplitAssigner) {
+                ((HybridSplitAssigner) splitAssigner).completedSnapshotPhase(event.getTableIds());
+                LOG.info(
+                        "Clean the SnapshotSplitAssigner#assignedSplits/splitCompletedOffsets to empty.");
+            }
         }
     }
 
@@ -153,15 +167,26 @@ public class IncrementalSourceEnumerator
                 continue;
             }
 
-            Optional<SourceSplitBase> split = splitAssigner.getNext();
+            Optional<SourceSplitBase> split;
+            synchronized (context) {
+                split = splitAssigner.getNext();
+            }
             if (split.isPresent()) {
                 final SourceSplitBase sourceSplit = split.get();
                 context.assignSplit(nextAwaiting, sourceSplit);
                 awaitingReader.remove();
                 LOG.debug("Assign split {} to subtask {}", sourceSplit, nextAwaiting);
             } else {
-                // there is no available splits by now, skip assigning
-                break;
+                if (splitAssigner.waitingForCompletedSplits()) {
+                    // there is no available splits by now, skip assigning
+                    break;
+                } else {
+                    LOG.info(
+                            "No more splits available, signal no more splits to subtask {}",
+                            nextAwaiting);
+                    context.signalNoMoreSplits(nextAwaiting);
+                    awaitingReader.remove();
+                }
             }
         }
     }

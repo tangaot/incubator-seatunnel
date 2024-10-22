@@ -23,7 +23,9 @@ import org.apache.seatunnel.engine.server.serializable.ResourceDataSerializerHoo
 
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
 import com.hazelcast.spi.impl.operationservice.Operation;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 public class SyncWorkerProfileOperation extends Operation implements IdentifiedDataSerializable {
 
     private WorkerProfile result;
@@ -31,7 +33,11 @@ public class SyncWorkerProfileOperation extends Operation implements IdentifiedD
     @Override
     public void run() throws Exception {
         SeaTunnelServer server = getService();
-        result = server.getSlotService().getWorkerProfile();
+        if (server.getSlotService() != null) {
+            result = server.getSlotService().getWorkerProfile();
+        } else {
+            result = null;
+        }
     }
 
     @Override

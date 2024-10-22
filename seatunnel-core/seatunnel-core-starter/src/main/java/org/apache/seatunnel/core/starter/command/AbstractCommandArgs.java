@@ -41,7 +41,12 @@ public abstract class AbstractCommandArgs extends CommandArgs {
     /** user-defined parameters */
     @Parameter(
             names = {"-i", "--variable"},
-            description = "Variable substitution, such as -i city=beijing, or -i date=20190318")
+            splitter = ParameterSplitter.class,
+            description =
+                    "Variable substitution, such as -i city=beijing, or -i date=20190318."
+                            + "We use ',' as separator, when inside \"\", ',' are treated as normal characters instead of delimiters."
+                            + " For example, -i city=\"beijing,shanghai\". If you want to use dynamic parameters,"
+                            + " you can use the following format: -i date=$(date +\"%Y%m%d\").")
     protected List<String> variables = Collections.emptyList();
 
     /** check config flag */
@@ -55,6 +60,18 @@ public abstract class AbstractCommandArgs extends CommandArgs {
             names = {"-n", "--name"},
             description = "SeaTunnel job name")
     protected String jobName = Constants.LOGO;
+
+    @Parameter(
+            names = {"--encrypt"},
+            description =
+                    "Encrypt config file, when both --decrypt and --encrypt are specified, only --encrypt will take effect")
+    protected boolean encrypt = false;
+
+    @Parameter(
+            names = {"--decrypt"},
+            description =
+                    "Decrypt config file, When both --decrypt and --encrypt are specified, only --encrypt will take effect")
+    protected boolean decrypt = false;
 
     public abstract DeployMode getDeployMode();
 }

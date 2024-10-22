@@ -25,6 +25,8 @@ import org.apache.seatunnel.engine.imap.storage.api.exception.IMapStorageExcepti
 import org.apache.seatunnel.engine.imap.storage.file.bean.IMapFileData;
 import org.apache.seatunnel.engine.imap.storage.file.common.FileConstants;
 import org.apache.seatunnel.engine.imap.storage.file.common.WALReader;
+import org.apache.seatunnel.engine.imap.storage.file.config.AbstractConfiguration;
+import org.apache.seatunnel.engine.imap.storage.file.config.FileConfiguration;
 import org.apache.seatunnel.engine.imap.storage.file.disruptor.WALDisruptor;
 import org.apache.seatunnel.engine.imap.storage.file.disruptor.WALEventType;
 import org.apache.seatunnel.engine.imap.storage.file.future.RequestFuture;
@@ -47,12 +49,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import static org.apache.seatunnel.engine.imap.storage.file.common.FileConstants.DEFAULT_IMAP_FILE_PATH_SPLIT;
 import static org.apache.seatunnel.engine.imap.storage.file.common.FileConstants.DEFAULT_IMAP_NAMESPACE;
 import static org.apache.seatunnel.engine.imap.storage.file.common.FileConstants.FileInitProperties.BUSINESS_KEY;
 import static org.apache.seatunnel.engine.imap.storage.file.common.FileConstants.FileInitProperties.CLUSTER_NAME;
-import static org.apache.seatunnel.engine.imap.storage.file.common.FileConstants.FileInitProperties.HDFS_CONFIG_KEY;
 import static org.apache.seatunnel.engine.imap.storage.file.common.FileConstants.FileInitProperties.NAMESPACE_KEY;
 import static org.apache.seatunnel.engine.imap.storage.file.common.FileConstants.FileInitProperties.WRITE_DATA_TIMEOUT_MILLISECONDS_KEY;
 
@@ -67,6 +69,8 @@ import static org.apache.seatunnel.engine.imap.storage.file.common.FileConstants
  */
 @Slf4j
 public class IMapFileStorage implements IMapStorage {
+
+    private static final String STORAGE_TYPE_KEY = "storage.type";
 
     public FileSystem fs;
 
@@ -105,6 +109,8 @@ public class IMapFileStorage implements IMapStorage {
 
     private Configuration conf;
 
+    private FileConfiguration fileConfiguration;
+
     /**
      * @param configuration configuration
      * @see FileConstants.FileInitProperties
@@ -112,7 +118,21 @@ public class IMapFileStorage implements IMapStorage {
     @Override
     public void initialize(Map<String, Object> configuration) {
         checkInitStorageProperties(configuration);
-        Configuration hadoopConf = (Configuration) configuration.get(HDFS_CONFIG_KEY);
+
+        String storageType =
+                String.valueOf(
+                        configuration.getOrDefault(
+                                STORAGE_TYPE_KEY, FileConfiguration.HDFS.toString()));
+        this.fileConfiguration = FileConfiguration.valueOf(storageType.toUpperCase());
+        // build configuration
+        AbstractConfiguration fileConfiguration = this.fileConfiguration.getConfiguration();
+        Map<String, String> stringMap =
+                configuration.entrySet().stream()
+                        .collect(
+                                Collectors.toMap(
+                                        Map.Entry::getKey, entry -> entry.getValue().toString()));
+
+        Configuration hadoopConf = fileConfiguration.buildConfiguration(stringMap);
         this.conf = hadoopConf;
         this.namespace = (String) configuration.getOrDefault(NAMESPACE_KEY, DEFAULT_IMAP_NAMESPACE);
         this.businessName = (String) configuration.get(BUSINESS_KEY);
@@ -141,7 +161,10 @@ public class IMapFileStorage implements IMapStorage {
         this.serializer = new ProtoStuffSerializer();
         this.walDisruptor =
                 new WALDisruptor(
-                        fs, businessRootPath + region + DEFAULT_IMAP_FILE_PATH_SPLIT, serializer);
+                        fs,
+                        FileConfiguration.valueOf(storageType.toUpperCase()),
+                        businessRootPath + region + DEFAULT_IMAP_FILE_PATH_SPLIT,
+                        serializer);
     }
 
     @Override
@@ -211,7 +234,7 @@ public class IMapFileStorage implements IMapStorage {
     @Override
     public Map<Object, Object> loadAll() {
         try {
-            WALReader reader = new WALReader(fs, serializer);
+            WALReader reader = new WALReader(fs, fileConfiguration, serializer);
             return reader.loadAllData(new Path(businessRootPath), new HashSet<>());
         } catch (IOException e) {
             throw new IMapStorageException("load all data error", e);
@@ -221,7 +244,7 @@ public class IMapFileStorage implements IMapStorage {
     @Override
     public Set<Object> loadAllKeys() {
         try {
-            WALReader reader = new WALReader(fs, serializer);
+            WALReader reader = new WALReader(fs, fileConfiguration, serializer);
             return reader.loadAllKeys(new Path(businessRootPath));
         } catch (IOException e) {
             throw new IMapStorageException(
@@ -332,8 +355,7 @@ public class IMapFileStorage implements IMapStorage {
         if (properties == null || properties.isEmpty()) {
             throw new IllegalArgumentException("init file storage properties is empty");
         }
-        List<String> requiredProperties =
-                Arrays.asList(BUSINESS_KEY, CLUSTER_NAME, HDFS_CONFIG_KEY);
+        List<String> requiredProperties = Arrays.asList(BUSINESS_KEY, CLUSTER_NAME);
         for (String requiredProperty : requiredProperties) {
             if (!properties.containsKey(requiredProperty)) {
                 throw new IllegalArgumentException(

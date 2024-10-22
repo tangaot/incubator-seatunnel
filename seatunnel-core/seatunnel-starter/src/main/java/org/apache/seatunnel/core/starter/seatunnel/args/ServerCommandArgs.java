@@ -31,7 +31,18 @@ public class ServerCommandArgs extends CommandArgs {
     @Parameter(
             names = {"-cn", "--cluster"},
             description = "The name of cluster")
-    private String clusterName = "seatunnel_default_cluster";
+    private String clusterName;
+
+    @Parameter(
+            names = {"-d", "--daemon"},
+            description = "The cluster daemon mode")
+    private boolean daemonMode = false;
+
+    @Parameter(
+            names = {"-r", "--role"},
+            description =
+                    "The cluster node role, default is master_and_worker, support master, worker, master_and_worker")
+    private String clusterRole;
 
     @Override
     public Command<?> buildCommand() {

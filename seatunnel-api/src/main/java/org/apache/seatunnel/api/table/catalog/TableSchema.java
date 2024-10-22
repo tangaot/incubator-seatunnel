@@ -26,6 +26,7 @@ import lombok.Data;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /** Represent a physical table schema. */
 @Data
@@ -56,6 +57,10 @@ public final class TableSchema implements Serializable {
         return new SeaTunnelRowType(fields, fieldTypes);
     }
 
+    public String[] getFieldNames() {
+        return columns.stream().map(Column::getName).toArray(String[]::new);
+    }
+
     public static final class Builder {
         private final List<Column> columns = new ArrayList<>();
 
@@ -83,8 +88,24 @@ public final class TableSchema implements Serializable {
             return this;
         }
 
+        public Builder constraintKey(List<ConstraintKey> constraintKeys) {
+            this.constraintKeys.addAll(constraintKeys);
+            return this;
+        }
+
         public TableSchema build() {
             return new TableSchema(columns, primaryKey, constraintKeys);
         }
+    }
+
+    public TableSchema copy() {
+        List<Column> copyColumns = columns.stream().map(Column::copy).collect(Collectors.toList());
+        List<ConstraintKey> copyConstraintKeys =
+                constraintKeys.stream().map(ConstraintKey::copy).collect(Collectors.toList());
+        return TableSchema.builder()
+                .constraintKey(copyConstraintKeys)
+                .columns(copyColumns)
+                .primaryKey(primaryKey == null ? null : primaryKey.copy())
+                .build();
     }
 }

@@ -20,10 +20,12 @@ package org.apache.seatunnel.core.starter.seatunnel.command;
 import org.apache.seatunnel.core.starter.command.Command;
 import org.apache.seatunnel.core.starter.seatunnel.args.ServerCommandArgs;
 import org.apache.seatunnel.engine.common.config.ConfigProvider;
+import org.apache.seatunnel.engine.common.config.EngineConfig;
 import org.apache.seatunnel.engine.common.config.SeaTunnelConfig;
-import org.apache.seatunnel.engine.server.SeaTunnelNodeContext;
+import org.apache.seatunnel.engine.common.exception.SeaTunnelEngineException;
+import org.apache.seatunnel.engine.server.SeaTunnelServerStarter;
 
-import com.hazelcast.instance.impl.HazelcastInstanceFactory;
+import org.apache.commons.lang3.StringUtils;
 
 /** This command is used to execute the SeaTunnel engine job by SeaTunnel API. */
 public class ServerExecuteCommand implements Command<ServerCommandArgs> {
@@ -37,10 +39,25 @@ public class ServerExecuteCommand implements Command<ServerCommandArgs> {
     @Override
     public void execute() {
         SeaTunnelConfig seaTunnelConfig = ConfigProvider.locateAndGetSeaTunnelConfig();
-        seaTunnelConfig.getHazelcastConfig().setClusterName(serverCommandArgs.getClusterName());
-        HazelcastInstanceFactory.newHazelcastInstance(
-                seaTunnelConfig.getHazelcastConfig(),
-                Thread.currentThread().getName(),
-                new SeaTunnelNodeContext(seaTunnelConfig));
+        String clusterRole = this.serverCommandArgs.getClusterRole();
+        if (StringUtils.isNotBlank(clusterRole)) {
+            if (EngineConfig.ClusterRole.MASTER.toString().equalsIgnoreCase(clusterRole)) {
+                seaTunnelConfig.getEngineConfig().setClusterRole(EngineConfig.ClusterRole.MASTER);
+            } else if (EngineConfig.ClusterRole.WORKER.toString().equalsIgnoreCase(clusterRole)) {
+                seaTunnelConfig.getEngineConfig().setClusterRole(EngineConfig.ClusterRole.WORKER);
+
+                // in hazelcast lite node will not store IMap data.
+                seaTunnelConfig.getHazelcastConfig().setLiteMember(true);
+            } else {
+                throw new SeaTunnelEngineException("Not supported cluster role: " + clusterRole);
+            }
+        } else {
+            seaTunnelConfig
+                    .getEngineConfig()
+                    .setClusterRole(EngineConfig.ClusterRole.MASTER_AND_WORKER);
+        }
+
+        SeaTunnelServerStarter.createHazelcastInstance(
+                seaTunnelConfig, Thread.currentThread().getName());
     }
 }

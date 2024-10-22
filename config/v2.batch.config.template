@@ -15,16 +15,14 @@
 # limitations under the License.
 #
 ######
-###### This config file is a demonstration of streaming processing in Seatunnel config
+###### This config file is a demonstration of streaming processing in SeaTunnel config
 ######
 
 env {
   # You can set SeaTunnel environment configuration here
-  execution.parallelism = 2
+  parallelism = 2
   job.mode = "BATCH"
   checkpoint.interval = 10000
-  #execution.checkpoint.interval = 10000
-  #execution.checkpoint.data-uri = "hdfs://localhost:9000/checkpoint"
 }
 
 source {
@@ -41,14 +39,14 @@ source {
     }
   }
 
-  # If you would like to get more information about how to configure Seatunnel and see full list of source plugins,
-  # please go to https://seatunnel.apache.org/docs/category/source-v2
+  # If you would like to get more information about how to configure SeaTunnel and see full list of source plugins,
+  # please go to https://seatunnel.apache.org/docs/connector-v2/source
 }
 
 sink {
   Console {
   }
 
-  # If you would like to get more information about how to configure Seatunnel and see full list of sink plugins,
-  # please go to https://seatunnel.apache.org/docs/category/sink-v2
+  # If you would like to get more information about how to configure SeaTunnel and see full list of sink plugins,
+  # please go to https://seatunnel.apache.org/docs/connector-v2/sink
 }

@@ -34,8 +34,6 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 
-import static org.apache.seatunnel.engine.common.utils.ExceptionUtil.sneakyThrow;
-
 @NoArgsConstructor
 @Slf4j
 public class CheckpointBarrierTriggerOperation extends TaskOperation {
@@ -70,7 +68,7 @@ public class CheckpointBarrierTriggerOperation extends TaskOperation {
     }
 
     @Override
-    public void run() throws Exception {
+    public void runInternal() throws Exception {
         SeaTunnelServer server = getService();
         RetryUtils.retryWithException(
                 () -> {
@@ -79,12 +77,23 @@ public class CheckpointBarrierTriggerOperation extends TaskOperation {
                                     .getExecutionContext(taskLocation.getTaskGroupLocation())
                                     .getTaskGroup()
                                     .getTask(taskLocation.getTaskID());
-                    try {
-                        log.debug("CheckpointBarrierTriggerOperation [{}]" + taskLocation);
-                        task.triggerBarrier(barrier);
-                    } catch (Exception e) {
-                        sneakyThrow(e);
-                    }
+                    task.getExecutionContext()
+                            .getTaskExecutionService()
+                            .asyncExecuteFunction(
+                                    taskLocation.getTaskGroupLocation(),
+                                    () -> {
+                                        try {
+                                            log.debug(
+                                                    "CheckpointBarrierTriggerOperation [{}]",
+                                                    taskLocation);
+                                            task.triggerBarrier(barrier);
+                                        } catch (Exception e) {
+                                            task.getExecutionContext()
+                                                    .sendToMaster(
+                                                            new CheckpointErrorReportOperation(
+                                                                    taskLocation, e));
+                                        }
+                                    });
                     return null;
                 },
                 new RetryUtils.RetryMaterial(

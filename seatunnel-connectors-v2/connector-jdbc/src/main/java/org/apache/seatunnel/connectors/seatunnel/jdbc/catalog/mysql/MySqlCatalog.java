@@ -19,257 +19,213 @@
 package org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.mysql;
 
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
+import org.apache.seatunnel.api.table.catalog.Column;
 import org.apache.seatunnel.api.table.catalog.ConstraintKey;
-import org.apache.seatunnel.api.table.catalog.PhysicalColumn;
-import org.apache.seatunnel.api.table.catalog.PrimaryKey;
 import org.apache.seatunnel.api.table.catalog.TableIdentifier;
 import org.apache.seatunnel.api.table.catalog.TablePath;
-import org.apache.seatunnel.api.table.catalog.TableSchema;
 import org.apache.seatunnel.api.table.catalog.exception.CatalogException;
-import org.apache.seatunnel.api.table.catalog.exception.DatabaseNotExistException;
-import org.apache.seatunnel.api.table.catalog.exception.TableNotExistException;
-import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
+import org.apache.seatunnel.api.table.converter.BasicTypeDefine;
 import org.apache.seatunnel.common.utils.JdbcUrlUtil;
 import org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.AbstractJdbcCatalog;
+import org.apache.seatunnel.connectors.seatunnel.jdbc.catalog.utils.CatalogUtils;
+import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.mysql.MySqlTypeConverter;
+import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.mysql.MySqlTypeMapper;
+import org.apache.seatunnel.connectors.seatunnel.jdbc.internal.dialect.mysql.MySqlVersion;
 
+import com.google.common.base.Preconditions;
 import com.mysql.cj.MysqlType;
-import com.mysql.cj.jdbc.result.ResultSetImpl;
+import lombok.extern.slf4j.Slf4j;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.sql.Statement;
+import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
+import java.util.Locale;
 
+@Slf4j
 public class MySqlCatalog extends AbstractJdbcCatalog {
 
-    private static final Set<String> SYS_DATABASES = new HashSet<>(4);
+    private static final String SELECT_COLUMNS_SQL_TEMPLATE =
+            "SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME ='%s' ORDER BY ORDINAL_POSITION ASC";
 
-    static {
-        SYS_DATABASES.add("information_schema");
-        SYS_DATABASES.add("mysql");
-        SYS_DATABASES.add("performance_schema");
-        SYS_DATABASES.add("sys");
-    }
+    private static final String SELECT_DATABASE_EXISTS =
+            "SELECT SCHEMA_NAME FROM information_schema.schemata WHERE SCHEMA_NAME = '%s'";
+
+    private static final String SELECT_TABLE_EXISTS =
+            "SELECT TABLE_SCHEMA,TABLE_NAME FROM information_schema.tables WHERE table_schema = '%s' AND table_name = '%s'";
+
+    private MySqlVersion version;
+    private MySqlTypeConverter typeConverter;
 
     public MySqlCatalog(
             String catalogName, String username, String pwd, JdbcUrlUtil.UrlInfo urlInfo) {
-        super(catalogName, username, pwd, urlInfo);
+        super(catalogName, username, pwd, urlInfo, null);
+        this.version = resolveVersion();
+        this.typeConverter = new MySqlTypeConverter(version);
     }
 
     @Override
-    public List<String> listDatabases() throws CatalogException {
-        try (Connection conn = DriverManager.getConnection(defaultUrl, username, pwd);
-                PreparedStatement ps = conn.prepareStatement("SHOW DATABASES;")) {
-
-            List<String> databases = new ArrayList<>();
-            ResultSet rs = ps.executeQuery();
-
-            while (rs.next()) {
-                String databaseName = rs.getString(1);
-                if (!SYS_DATABASES.contains(databaseName)) {
-                    databases.add(rs.getString(1));
-                }
-            }
-
-            return databases;
-        } catch (Exception e) {
-            throw new CatalogException(
-                    String.format("Failed listing database in catalog %s", this.catalogName), e);
-        }
+    protected String getDatabaseWithConditionSql(String databaseName) {
+        return String.format(SELECT_DATABASE_EXISTS, databaseName);
     }
 
     @Override
-    public List<String> listTables(String databaseName)
-            throws CatalogException, DatabaseNotExistException {
-        if (!databaseExists(databaseName)) {
-            throw new DatabaseNotExistException(this.catalogName, databaseName);
-        }
-
-        String dbUrl = getUrlFromDatabaseName(databaseName);
-        try (Connection conn = DriverManager.getConnection(dbUrl, username, pwd);
-                PreparedStatement ps = conn.prepareStatement("SHOW TABLES;")) {
-
-            ResultSet rs = ps.executeQuery();
-
-            List<String> tables = new ArrayList<>();
-
-            while (rs.next()) {
-                tables.add(rs.getString(1));
-            }
-
-            return tables;
-        } catch (Exception e) {
-            throw new CatalogException(
-                    String.format("Failed listing database in catalog %s", catalogName), e);
-        }
+    protected String getTableWithConditionSql(TablePath tablePath) {
+        return String.format(
+                SELECT_TABLE_EXISTS, tablePath.getDatabaseName(), tablePath.getTableName());
     }
 
     @Override
-    public CatalogTable getTable(TablePath tablePath)
-            throws CatalogException, TableNotExistException {
-        if (!tableExists(tablePath)) {
-            throw new TableNotExistException(catalogName, tablePath);
-        }
-
-        String dbUrl = getUrlFromDatabaseName(tablePath.getDatabaseName());
-        try (Connection conn = DriverManager.getConnection(dbUrl, username, pwd)) {
-            DatabaseMetaData metaData = conn.getMetaData();
-            Optional<PrimaryKey> primaryKey =
-                    getPrimaryKey(metaData, tablePath.getDatabaseName(), tablePath.getTableName());
-            List<ConstraintKey> constraintKeys =
-                    getConstraintKeys(
-                            metaData, tablePath.getDatabaseName(), tablePath.getTableName());
-
-            try (PreparedStatement ps =
-                    conn.prepareStatement(
-                            String.format(
-                                    "SELECT * FROM %s WHERE 1 = 0;",
-                                    tablePath.getFullNameWithQuoted()))) {
-                ResultSetMetaData tableMetaData = ps.getMetaData();
-                TableSchema.Builder builder = TableSchema.builder();
-                // add column
-                for (int i = 1; i <= tableMetaData.getColumnCount(); i++) {
-                    String columnName = tableMetaData.getColumnName(i);
-                    SeaTunnelDataType<?> type = fromJdbcType(tableMetaData, i);
-                    int columnDisplaySize = tableMetaData.getColumnDisplaySize(i);
-                    String comment = tableMetaData.getColumnLabel(i);
-                    boolean isNullable =
-                            tableMetaData.isNullable(i) == ResultSetMetaData.columnNullable;
-                    Object defaultValue =
-                            getColumnDefaultValue(metaData, tablePath.getTableName(), columnName)
-                                    .orElse(null);
-
-                    PhysicalColumn physicalColumn =
-                            PhysicalColumn.of(
-                                    columnName,
-                                    type,
-                                    columnDisplaySize,
-                                    isNullable,
-                                    defaultValue,
-                                    comment);
-                    builder.column(physicalColumn);
-                }
-                // add primary key
-                primaryKey.ifPresent(builder::primaryKey);
-                // add constraint key
-                constraintKeys.forEach(builder::constraintKey);
-                TableIdentifier tableIdentifier =
-                        TableIdentifier.of(
-                                catalogName, tablePath.getDatabaseName(), tablePath.getTableName());
-                return CatalogTable.of(
-                        tableIdentifier,
-                        builder.build(),
-                        buildConnectorOptions(tablePath),
-                        Collections.emptyList(),
-                        "");
-            }
-
-        } catch (Exception e) {
-            throw new CatalogException(
-                    String.format("Failed getting table %s", tablePath.getFullName()), e);
-        }
-    }
-
-    // todo: If the origin source is mysql, we can directly use create table like to create the
-    // target table?
-    @Override
-    protected boolean createTableInternal(TablePath tablePath, CatalogTable table)
-            throws CatalogException {
-        String dbUrl = getUrlFromDatabaseName(tablePath.getDatabaseName());
-        String createTableSql = MysqlCreateTableSqlBuilder.builder(tablePath, table).build();
-        try (Connection conn = DriverManager.getConnection(dbUrl, username, pwd);
-                PreparedStatement ps = conn.prepareStatement(createTableSql)) {
-            return ps.execute();
-        } catch (Exception e) {
-            throw new CatalogException(
-                    String.format("Failed creating table %s", tablePath.getFullName()), e);
-        }
+    protected String getListDatabaseSql() {
+        return "SHOW DATABASES;";
     }
 
     @Override
-    protected boolean dropTableInternal(TablePath tablePath) throws CatalogException {
-        String dbUrl = getUrlFromDatabaseName(tablePath.getDatabaseName());
-        try (Connection conn = DriverManager.getConnection(dbUrl, username, pwd);
-                PreparedStatement ps =
-                        conn.prepareStatement(
-                                String.format(
-                                        "DROP TABLE %s IF EXIST;", tablePath.getFullName()))) {
-            // Will there exist concurrent drop for one table?
-            return ps.execute();
-        } catch (SQLException e) {
-            throw new CatalogException(
-                    String.format("Failed dropping table %s", tablePath.getFullName()), e);
-        }
+    protected String getListTableSql(String databaseName) {
+        return "SHOW TABLES;";
     }
 
     @Override
-    protected boolean createDatabaseInternal(String databaseName) throws CatalogException {
-        try (Connection conn = DriverManager.getConnection(defaultUrl, username, pwd);
-                PreparedStatement ps =
-                        conn.prepareStatement(
-                                String.format("CREATE DATABASE `%s`;", databaseName))) {
-            return ps.execute();
-        } catch (Exception e) {
-            throw new CatalogException(
-                    String.format(
-                            "Failed creating database %s in catalog %s",
-                            databaseName, this.catalogName),
-                    e);
-        }
+    protected String getTableName(ResultSet rs) throws SQLException {
+        return rs.getString(1);
     }
 
     @Override
-    protected boolean dropDatabaseInternal(String databaseName) throws CatalogException {
-        try (Connection conn = DriverManager.getConnection(defaultUrl, username, pwd);
-                PreparedStatement ps =
-                        conn.prepareStatement(String.format("DROP DATABASE `%s`;", databaseName))) {
-            return ps.execute();
-        } catch (Exception e) {
-            throw new CatalogException(
-                    String.format(
-                            "Failed dropping database %s in catalog %s",
-                            databaseName, this.catalogName),
-                    e);
-        }
+    protected String getTableName(TablePath tablePath) {
+        return tablePath.getTableName();
     }
 
-    /**
-     * @see com.mysql.cj.MysqlType
-     * @see ResultSetImpl#getObjectStoredProc(int, int)
-     */
-    @SuppressWarnings("unchecked")
-    private SeaTunnelDataType<?> fromJdbcType(ResultSetMetaData metadata, int colIndex)
+    @Override
+    protected String getSelectColumnsSql(TablePath tablePath) {
+        return String.format(
+                SELECT_COLUMNS_SQL_TEMPLATE, tablePath.getDatabaseName(), tablePath.getTableName());
+    }
+
+    @Override
+    protected TableIdentifier getTableIdentifier(TablePath tablePath) {
+        return TableIdentifier.of(
+                catalogName, tablePath.getDatabaseName(), tablePath.getTableName());
+    }
+
+    @Override
+    protected List<ConstraintKey> getConstraintKeys(DatabaseMetaData metaData, TablePath tablePath)
             throws SQLException {
-        MysqlType mysqlType = MysqlType.getByName(metadata.getColumnTypeName(colIndex));
-        Map<String, Object> dataTypeProperties = new HashMap<>();
-        dataTypeProperties.put(MysqlDataTypeConvertor.PRECISION, metadata.getPrecision(colIndex));
-        dataTypeProperties.put(MysqlDataTypeConvertor.SCALE, metadata.getScale(colIndex));
-        return new MysqlDataTypeConvertor().toSeaTunnelType(mysqlType, dataTypeProperties);
+        List<ConstraintKey> indexList =
+                super.getConstraintKeys(
+                        metaData,
+                        tablePath.getDatabaseName(),
+                        tablePath.getSchemaName(),
+                        tablePath.getTableName());
+        for (Iterator<ConstraintKey> it = indexList.iterator(); it.hasNext(); ) {
+            ConstraintKey index = it.next();
+            if (ConstraintKey.ConstraintType.UNIQUE_KEY.equals(index.getConstraintType())
+                    && "PRIMARY".equals(index.getConstraintName())) {
+                it.remove();
+            }
+        }
+        return indexList;
     }
 
-    @SuppressWarnings("MagicNumber")
-    private Map<String, String> buildConnectorOptions(TablePath tablePath) {
-        Map<String, String> options = new HashMap<>(8);
-        options.put("connector", "jdbc");
-        options.put("url", baseUrl + tablePath.getDatabaseName());
-        options.put("table-name", tablePath.getFullName());
-        options.put("username", username);
-        options.put("password", pwd);
-        return options;
+    @Override
+    protected Column buildColumn(ResultSet resultSet) throws SQLException {
+        String columnName = resultSet.getString("COLUMN_NAME");
+        // e.g. tinyint(1) unsigned
+        String columnType = resultSet.getString("COLUMN_TYPE");
+        // e.g. tinyint
+        String dataType = resultSet.getString("DATA_TYPE").toUpperCase();
+        String comment = resultSet.getString("COLUMN_COMMENT");
+        Object defaultValue = resultSet.getObject("COLUMN_DEFAULT");
+        String isNullableStr = resultSet.getString("IS_NULLABLE");
+        boolean isNullable = isNullableStr.equals("YES");
+        // e.g. `decimal(10, 2)` is 10
+        long numberPrecision = resultSet.getInt("NUMERIC_PRECISION");
+        // e.g. `decimal(10, 2)` is 2
+        int numberScale = resultSet.getInt("NUMERIC_SCALE");
+        // e.g. `varchar(10)` is 40
+        long charOctetLength = resultSet.getLong("CHARACTER_OCTET_LENGTH");
+        // e.g. `timestamp(3)` is 3
+        int timePrecision =
+                MySqlVersion.V_5_5.equals(version) ? 0 : resultSet.getInt("DATETIME_PRECISION");
+
+        Preconditions.checkArgument(!(numberPrecision > 0 && charOctetLength > 0));
+        Preconditions.checkArgument(!(numberScale > 0 && timePrecision > 0));
+
+        MysqlType mysqlType = MysqlType.getByName(columnType);
+        boolean unsigned = columnType.toLowerCase(Locale.ROOT).contains("unsigned");
+
+        BasicTypeDefine<MysqlType> typeDefine =
+                BasicTypeDefine.<MysqlType>builder()
+                        .name(columnName)
+                        .columnType(columnType)
+                        .dataType(dataType)
+                        .nativeType(mysqlType)
+                        .unsigned(unsigned)
+                        .length(Math.max(charOctetLength, numberPrecision))
+                        .precision(numberPrecision)
+                        .scale(Math.max(numberScale, timePrecision))
+                        .nullable(isNullable)
+                        .defaultValue(defaultValue)
+                        .comment(comment)
+                        .build();
+        return typeConverter.convert(typeDefine);
     }
 
-    private String getUrlFromDatabaseName(String databaseName) {
-        return baseUrl + databaseName + suffix;
+    @Override
+    protected String getCreateTableSql(
+            TablePath tablePath, CatalogTable table, boolean createIndex) {
+        return MysqlCreateTableSqlBuilder.builder(tablePath, table, typeConverter, createIndex)
+                .build(table.getCatalogName());
+    }
+
+    @Override
+    protected String getDropTableSql(TablePath tablePath) {
+        return String.format(
+                "DROP TABLE `%s`.`%s`;", tablePath.getDatabaseName(), tablePath.getTableName());
+    }
+
+    @Override
+    protected String getCreateDatabaseSql(String databaseName) {
+        return String.format("CREATE DATABASE `%s`;", databaseName);
+    }
+
+    @Override
+    protected String getDropDatabaseSql(String databaseName) {
+        return String.format("DROP DATABASE `%s`;", databaseName);
+    }
+
+    @Override
+    public CatalogTable getTable(String sqlQuery) throws SQLException {
+        Connection defaultConnection = getConnection(defaultUrl);
+        return CatalogUtils.getCatalogTable(
+                defaultConnection, sqlQuery, new MySqlTypeMapper(typeConverter));
+    }
+
+    @Override
+    protected String getTruncateTableSql(TablePath tablePath) throws CatalogException {
+        return String.format(
+                "TRUNCATE TABLE `%s`.`%s`;", tablePath.getDatabaseName(), tablePath.getTableName());
+    }
+
+    public String getExistDataSql(TablePath tablePath) {
+        return String.format(
+                "SELECT * FROM `%s`.`%s` LIMIT 1;",
+                tablePath.getDatabaseName(), tablePath.getTableName());
+    }
+
+    private MySqlVersion resolveVersion() {
+        try (Statement statement = getConnection(defaultUrl).createStatement();
+                ResultSet resultSet = statement.executeQuery("SELECT VERSION()")) {
+            resultSet.next();
+            return MySqlVersion.parse(resultSet.getString(1));
+        } catch (Exception e) {
+            log.info(
+                    "Failed to get mysql version, fallback to default version: {}",
+                    MySqlVersion.V_5_7,
+                    e);
+            return MySqlVersion.V_5_7;
+        }
     }
 }

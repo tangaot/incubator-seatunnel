@@ -17,53 +17,89 @@
 
 package org.apache.seatunnel.transform.common;
 
-import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
+import org.apache.seatunnel.api.table.catalog.CatalogTable;
+import org.apache.seatunnel.api.table.catalog.Column;
+import org.apache.seatunnel.api.table.catalog.ConstraintKey;
+import org.apache.seatunnel.api.table.catalog.TableIdentifier;
+import org.apache.seatunnel.api.table.catalog.TableSchema;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
-import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.Arrays;
-import java.util.LinkedList;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Slf4j
-public abstract class SingleFieldOutputTransform extends AbstractSeaTunnelTransform {
-
-    private static final String[] TYPE_ARRAY_STRING = new String[0];
-    private static final SeaTunnelDataType[] TYPE_ARRAY_SEATUNNEL_DATA_TYPE =
-            new SeaTunnelDataType[0];
+public abstract class SingleFieldOutputTransform extends AbstractCatalogSupportTransform {
 
     private int fieldIndex;
     private SeaTunnelRowContainerGenerator rowContainerGenerator;
 
+    public SingleFieldOutputTransform(@NonNull CatalogTable inputCatalogTable) {
+        super(inputCatalogTable);
+    }
+
     @Override
-    protected SeaTunnelRowType transformRowType(SeaTunnelRowType inputRowType) {
-        setInputRowType(inputRowType);
+    protected SeaTunnelRow transformRow(SeaTunnelRow inputRow) {
+        Object fieldValue = getOutputFieldValue(new SeaTunnelRowAccessor(inputRow));
 
-        String outputFieldName = getOutputFieldName();
-        SeaTunnelDataType outputFieldDataType = getOutputFieldDataType();
+        SeaTunnelRow outputRow = rowContainerGenerator.apply(inputRow);
+        outputRow.setField(fieldIndex, fieldValue);
+        return outputRow;
+    }
 
-        LinkedList<String> fieldNames =
-                new LinkedList<>(Arrays.asList(inputRowType.getFieldNames()));
-        LinkedList<SeaTunnelDataType> fieldDataTypes =
-                new LinkedList<>(Arrays.asList(inputRowType.getFieldTypes()));
+    /**
+     * Outputs new field value
+     *
+     * @param inputRow The inputRow of upstream input.
+     */
+    protected abstract Object getOutputFieldValue(SeaTunnelRowAccessor inputRow);
 
-        int index = fieldNames.indexOf(outputFieldName);
-        if (index != -1) {
-            if (!outputFieldDataType.equals(fieldDataTypes.get(index))) {
-                fieldDataTypes.set(index, outputFieldDataType);
+    @Override
+    protected TableSchema transformTableSchema() {
+        Column outputColumn = getOutputColumn();
+        List<ConstraintKey> copiedConstraintKeys =
+                inputCatalogTable.getTableSchema().getConstraintKeys().stream()
+                        .map(ConstraintKey::copy)
+                        .collect(Collectors.toList());
+
+        TableSchema.Builder builder = TableSchema.builder();
+        if (inputCatalogTable.getTableSchema().getPrimaryKey() != null) {
+            builder.primaryKey(inputCatalogTable.getTableSchema().getPrimaryKey().copy());
+        }
+        builder.constraintKey(copiedConstraintKeys);
+        List<Column> columns =
+                inputCatalogTable.getTableSchema().getColumns().stream()
+                        .map(Column::copy)
+                        .collect(Collectors.toList());
+
+        int addFieldCount = 0;
+        Optional<Column> optional =
+                columns.stream()
+                        .filter(c -> c.getName().equals(outputColumn.getName()))
+                        .findFirst();
+        if (optional.isPresent()) {
+            Column originalColumn = optional.get();
+            int originalColumnIndex = columns.indexOf(originalColumn);
+            if (!originalColumn.getDataType().equals(outputColumn.getDataType())) {
+                columns.set(originalColumnIndex, originalColumn.copy(outputColumn.getDataType()));
             }
-
-            fieldIndex = index;
-            rowContainerGenerator = SeaTunnelRowContainerGenerator.REUSE_ROW;
+            this.fieldIndex = originalColumnIndex;
         } else {
-            fieldNames.addLast(outputFieldName);
-            fieldDataTypes.addLast(outputFieldDataType);
+            addFieldCount++;
+            columns.add(outputColumn);
+            this.fieldIndex = columns.indexOf(outputColumn);
+        }
 
-            int inputFieldLength = inputRowType.getTotalFields();
-            int outputFieldLength = fieldNames.size();
+        TableSchema outputTableSchema = builder.columns(columns).build();
+        if (addFieldCount > 0) {
+            this.fieldIndex = outputTableSchema.getColumns().size() - 1;
+            int inputFieldLength =
+                    inputCatalogTable.getTableSchema().toPhysicalRowDataType().getTotalFields();
+            int outputFieldLength = outputTableSchema.getColumns().size();
 
-            fieldIndex = fieldNames.indexOf(outputFieldName);
             rowContainerGenerator =
                     new SeaTunnelRowContainerGenerator() {
                         @Override
@@ -83,52 +119,30 @@ public abstract class SingleFieldOutputTransform extends AbstractSeaTunnelTransf
                             return outputRow;
                         }
                     };
+        } else {
+            rowContainerGenerator = SeaTunnelRowContainerGenerator.REUSE_ROW;
         }
 
-        SeaTunnelRowType outputRowType =
-                new SeaTunnelRowType(
-                        fieldNames.toArray(TYPE_ARRAY_STRING),
-                        fieldDataTypes.toArray(TYPE_ARRAY_SEATUNNEL_DATA_TYPE));
-        log.info("Changed input row type: {} to output row type: {}", inputRowType, outputRowType);
+        log.info(
+                "Changed input table schema: {} to output table schema: {}",
+                inputCatalogTable.getTableSchema(),
+                outputTableSchema);
 
-        return outputRowType;
+        return outputTableSchema;
     }
 
     @Override
-    protected SeaTunnelRow transformRow(SeaTunnelRow inputRow) {
-        Object fieldValue = getOutputFieldValue(new SeaTunnelRowAccessor(inputRow));
-
-        SeaTunnelRow outputRow = rowContainerGenerator.apply(inputRow);
-        outputRow.setField(fieldIndex, fieldValue);
-        return outputRow;
+    protected TableIdentifier transformTableIdentifier() {
+        return inputCatalogTable.getTableId().copy();
     }
 
-    /**
-     * Set the data type info of input data.
-     *
-     * @param inputRowType The data type info of upstream input.
-     */
-    protected abstract void setInputRowType(SeaTunnelRowType inputRowType);
+    protected abstract Column getOutputColumn();
 
-    /**
-     * Outputs new field
-     *
-     * @return
-     */
-    protected abstract String getOutputFieldName();
+    public int getFieldIndex() {
+        return fieldIndex;
+    }
 
-    /**
-     * Outputs new field datatype
-     *
-     * @return
-     */
-    protected abstract SeaTunnelDataType getOutputFieldDataType();
-
-    /**
-     * Outputs new field value
-     *
-     * @param inputRow The inputRow of upstream input.
-     * @return
-     */
-    protected abstract Object getOutputFieldValue(SeaTunnelRowAccessor inputRow);
+    public SeaTunnelRowContainerGenerator getRowContainerGenerator() {
+        return rowContainerGenerator;
+    }
 }

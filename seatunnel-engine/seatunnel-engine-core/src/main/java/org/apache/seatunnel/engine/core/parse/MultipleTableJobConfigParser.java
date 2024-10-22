@@ -22,58 +22,84 @@ import org.apache.seatunnel.shade.com.typesafe.config.Config;
 import org.apache.seatunnel.api.common.CommonOptions;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.env.EnvCommonOptions;
-import org.apache.seatunnel.api.env.ParsingMode;
-import org.apache.seatunnel.api.sink.DataSaveMode;
+import org.apache.seatunnel.api.sink.SaveModeExecuteLocation;
+import org.apache.seatunnel.api.sink.SaveModeExecuteWrapper;
+import org.apache.seatunnel.api.sink.SaveModeHandler;
 import org.apache.seatunnel.api.sink.SeaTunnelSink;
-import org.apache.seatunnel.api.sink.SupportDataSaveMode;
+import org.apache.seatunnel.api.sink.SupportMultiTableSink;
+import org.apache.seatunnel.api.sink.SupportSaveMode;
 import org.apache.seatunnel.api.source.SeaTunnelSource;
 import org.apache.seatunnel.api.source.SourceSplit;
-import org.apache.seatunnel.api.table.catalog.CatalogOptions;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
-import org.apache.seatunnel.api.table.catalog.CatalogTableUtil;
-import org.apache.seatunnel.api.table.catalog.TablePath;
-import org.apache.seatunnel.api.table.factory.CatalogFactory;
+import org.apache.seatunnel.api.table.factory.Factory;
 import org.apache.seatunnel.api.table.factory.FactoryUtil;
 import org.apache.seatunnel.api.table.factory.TableSinkFactory;
 import org.apache.seatunnel.api.table.factory.TableSourceFactory;
+import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
+import org.apache.seatunnel.api.transform.SeaTunnelTransform;
 import org.apache.seatunnel.common.Constants;
 import org.apache.seatunnel.common.config.Common;
-import org.apache.seatunnel.common.utils.FileUtils;
+import org.apache.seatunnel.common.config.TypesafeConfigUtils;
+import org.apache.seatunnel.common.constants.CollectionConstants;
+import org.apache.seatunnel.common.exception.SeaTunnelRuntimeException;
+import org.apache.seatunnel.common.utils.ExceptionUtils;
+import org.apache.seatunnel.core.starter.execution.PluginUtil;
 import org.apache.seatunnel.core.starter.utils.ConfigBuilder;
 import org.apache.seatunnel.engine.common.config.JobConfig;
 import org.apache.seatunnel.engine.common.exception.JobDefineCheckException;
+import org.apache.seatunnel.engine.common.exception.SeaTunnelEngineException;
 import org.apache.seatunnel.engine.common.loader.SeaTunnelChildFirstClassLoader;
 import org.apache.seatunnel.engine.common.utils.IdGenerator;
+import org.apache.seatunnel.engine.core.classloader.ClassLoaderService;
 import org.apache.seatunnel.engine.core.dag.actions.Action;
 import org.apache.seatunnel.engine.core.dag.actions.SinkAction;
 import org.apache.seatunnel.engine.core.dag.actions.SinkConfig;
 import org.apache.seatunnel.engine.core.dag.actions.SourceAction;
+import org.apache.seatunnel.engine.core.dag.actions.TransformAction;
+import org.apache.seatunnel.engine.core.job.ConnectorJarIdentifier;
+import org.apache.seatunnel.plugin.discovery.PluginIdentifier;
+import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelSinkPluginDiscovery;
+import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelSourcePluginDiscovery;
+import org.apache.seatunnel.plugin.discovery.seatunnel.SeaTunnelTransformPluginDiscovery;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 
-import com.hazelcast.logging.ILogger;
-import com.hazelcast.logging.Logger;
+import com.google.common.collect.Lists;
+import lombok.extern.slf4j.Slf4j;
 import scala.Tuple2;
 
-import java.io.IOException;
 import java.io.Serializable;
+import java.net.MalformedURLException;
 import java.net.URL;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+import static org.apache.seatunnel.api.common.SeaTunnelAPIErrorCode.HANDLE_SAVE_MODE_FAILED;
+import static org.apache.seatunnel.api.table.factory.FactoryUtil.DEFAULT_ID;
+import static org.apache.seatunnel.engine.core.parse.ConfigParserUtil.getFactoryId;
+import static org.apache.seatunnel.engine.core.parse.ConfigParserUtil.getInputIds;
+
+@Slf4j
 public class MultipleTableJobConfigParser {
-
-    private static final ILogger LOGGER = Logger.getLogger(JobConfigParser.class);
 
     private final IdGenerator idGenerator;
     private final JobConfig jobConfig;
@@ -84,68 +110,171 @@ public class MultipleTableJobConfigParser {
     private final ReadonlyConfig envOptions;
 
     private final JobConfigParser fallbackParser;
-
-    private final ParsingMode parsingMode;
+    private final boolean isStartWithSavePoint;
 
     public MultipleTableJobConfigParser(
             String jobDefineFilePath, IdGenerator idGenerator, JobConfig jobConfig) {
-        this(jobDefineFilePath, idGenerator, jobConfig, Collections.emptyList());
+        this(jobDefineFilePath, idGenerator, jobConfig, Collections.emptyList(), false);
+    }
+
+    public MultipleTableJobConfigParser(
+            Config seaTunnelJobConfig, IdGenerator idGenerator, JobConfig jobConfig) {
+        this(seaTunnelJobConfig, idGenerator, jobConfig, Collections.emptyList(), false);
     }
 
     public MultipleTableJobConfigParser(
             String jobDefineFilePath,
             IdGenerator idGenerator,
             JobConfig jobConfig,
-            List<URL> commonPluginJars) {
+            List<URL> commonPluginJars,
+            boolean isStartWithSavePoint) {
+        this(
+                jobDefineFilePath,
+                null,
+                idGenerator,
+                jobConfig,
+                commonPluginJars,
+                isStartWithSavePoint);
+    }
+
+    public MultipleTableJobConfigParser(
+            String jobDefineFilePath,
+            List<String> variables,
+            IdGenerator idGenerator,
+            JobConfig jobConfig,
+            List<URL> commonPluginJars,
+            boolean isStartWithSavePoint) {
         this.idGenerator = idGenerator;
         this.jobConfig = jobConfig;
         this.commonPluginJars = commonPluginJars;
-        this.seaTunnelJobConfig = ConfigBuilder.of(Paths.get(jobDefineFilePath));
+        this.isStartWithSavePoint = isStartWithSavePoint;
+        this.seaTunnelJobConfig = ConfigBuilder.of(Paths.get(jobDefineFilePath), variables);
         this.envOptions = ReadonlyConfig.fromConfig(seaTunnelJobConfig.getConfig("env"));
         this.fallbackParser =
-                new JobConfigParser(jobDefineFilePath, idGenerator, jobConfig, commonPluginJars);
-        this.parsingMode = envOptions.get(EnvCommonOptions.DAG_PARSING_MODE);
+                new JobConfigParser(idGenerator, commonPluginJars, this, isStartWithSavePoint);
     }
 
-    public ImmutablePair<List<Action>, Set<URL>> parse() {
-        if (parsingMode == ParsingMode.SINGLENESS) {
-            return fallbackParser.parse();
+    public MultipleTableJobConfigParser(
+            Config seaTunnelJobConfig,
+            IdGenerator idGenerator,
+            JobConfig jobConfig,
+            List<URL> commonPluginJars,
+            boolean isStartWithSavePoint) {
+        this.idGenerator = idGenerator;
+        this.jobConfig = jobConfig;
+        this.commonPluginJars = commonPluginJars;
+        this.isStartWithSavePoint = isStartWithSavePoint;
+        this.seaTunnelJobConfig = seaTunnelJobConfig;
+        this.envOptions = ReadonlyConfig.fromConfig(seaTunnelJobConfig.getConfig("env"));
+        this.fallbackParser =
+                new JobConfigParser(idGenerator, commonPluginJars, this, isStartWithSavePoint);
+    }
+
+    public ImmutablePair<List<Action>, Set<URL>> parse(ClassLoaderService classLoaderService) {
+        this.fillJobConfigAndCommonJars();
+        List<? extends Config> sourceConfigs =
+                TypesafeConfigUtils.getConfigList(
+                        seaTunnelJobConfig, "source", Collections.emptyList());
+        List<? extends Config> transformConfigs =
+                TypesafeConfigUtils.getConfigList(
+                        seaTunnelJobConfig, "transform", Collections.emptyList());
+        List<? extends Config> sinkConfigs =
+                TypesafeConfigUtils.getConfigList(
+                        seaTunnelJobConfig, "sink", Collections.emptyList());
+
+        List<URL> connectorJars = getConnectorJarList(sourceConfigs, transformConfigs, sinkConfigs);
+        if (!commonPluginJars.isEmpty()) {
+            connectorJars.addAll(commonPluginJars);
         }
-        List<URL> connectorJars = new ArrayList<>();
+        ClassLoader parentClassLoader = Thread.currentThread().getContextClassLoader();
+
+        ClassLoader classLoader;
+        if (classLoaderService == null) {
+            classLoader = new SeaTunnelChildFirstClassLoader(connectorJars, parentClassLoader);
+        } else {
+            classLoader =
+                    classLoaderService.getClassLoader(
+                            Long.parseLong(jobConfig.getJobContext().getJobId()), connectorJars);
+        }
         try {
-            connectorJars = FileUtils.searchJarFiles(Common.connectorJarDir("seatunnel"));
-        } catch (IOException e) {
-            LOGGER.info(e);
+            Thread.currentThread().setContextClassLoader(classLoader);
+            ConfigParserUtil.checkGraph(sourceConfigs, transformConfigs, sinkConfigs);
+            LinkedHashMap<String, List<Tuple2<CatalogTable, Action>>> tableWithActionMap =
+                    new LinkedHashMap<>();
+
+            log.info("start generating all sources.");
+            for (int configIndex = 0; configIndex < sourceConfigs.size(); configIndex++) {
+                Config sourceConfig = sourceConfigs.get(configIndex);
+                Tuple2<String, List<Tuple2<CatalogTable, Action>>> tuple2 =
+                        parseSource(configIndex, sourceConfig, classLoader);
+                tableWithActionMap.put(tuple2._1(), tuple2._2());
+            }
+
+            log.info("start generating all transforms.");
+            parseTransforms(transformConfigs, classLoader, tableWithActionMap);
+
+            log.info("start generating all sinks.");
+            List<Action> sinkActions = new ArrayList<>();
+            for (int configIndex = 0; configIndex < sinkConfigs.size(); configIndex++) {
+                Config sinkConfig = sinkConfigs.get(configIndex);
+                sinkActions.addAll(
+                        parseSink(configIndex, sinkConfig, classLoader, tableWithActionMap));
+            }
+            Set<URL> factoryUrls = getUsedFactoryUrls(sinkActions);
+            return new ImmutablePair<>(sinkActions, factoryUrls);
+        } finally {
+            Thread.currentThread().setContextClassLoader(parentClassLoader);
+            if (classLoaderService != null) {
+                classLoaderService.releaseClassLoader(
+                        Long.parseLong(jobConfig.getJobContext().getJobId()), connectorJars);
+            }
         }
-        ClassLoader classLoader = new SeaTunnelChildFirstClassLoader(connectorJars);
-        Thread.currentThread().setContextClassLoader(classLoader);
-        // TODO: Support configuration transform
-        List<? extends Config> sourceConfigs = seaTunnelJobConfig.getConfigList("source");
-        List<? extends Config> sinkConfigs = seaTunnelJobConfig.getConfigList("sink");
-        if (CollectionUtils.isEmpty(sourceConfigs) || CollectionUtils.isEmpty(sinkConfigs)) {
-            throw new JobDefineCheckException("Source And Sink can not be null");
-        }
-        this.fillJobConfig();
-        Map<String, List<Tuple2<CatalogTable, Action>>> tableWithActionMap = new HashMap<>();
-        for (Config sourceConfig : sourceConfigs) {
-            Tuple2<String, List<Tuple2<CatalogTable, Action>>> tuple2 =
-                    parserSource(sourceConfig, classLoader);
-            tableWithActionMap.put(tuple2._1(), tuple2._2());
-        }
-        List<Action> sinkActions = new ArrayList<>();
-        for (Config sinkConfig : sinkConfigs) {
-            sinkActions.addAll(parserSink(sinkConfig, classLoader, tableWithActionMap));
-        }
-        Set<URL> factoryUrls = getUsedFactoryUrls(sinkActions);
-        factoryUrls.addAll(commonPluginJars);
-        sinkActions.forEach(this::addCommonPluginJarsToAction);
-        return new ImmutablePair<>(sinkActions, factoryUrls);
     }
 
     public Set<URL> getUsedFactoryUrls(List<Action> sinkActions) {
         Set<URL> urls = new HashSet<>();
         fillUsedFactoryUrls(sinkActions, urls);
         return urls;
+    }
+
+    private List<URL> getConnectorJarList(
+            List<? extends Config> sourceConfigs,
+            List<? extends Config> transformConfigs,
+            List<? extends Config> sinkConfigs) {
+        List<PluginIdentifier> factoryIds =
+                Stream.concat(
+                                Stream.concat(
+                                        sourceConfigs.stream()
+                                                .map(ConfigParserUtil::getFactoryId)
+                                                .map(
+                                                        factory ->
+                                                                PluginIdentifier.of(
+                                                                        CollectionConstants
+                                                                                .SEATUNNEL_PLUGIN,
+                                                                        CollectionConstants
+                                                                                .SOURCE_PLUGIN,
+                                                                        factory)),
+                                        transformConfigs.stream()
+                                                .map(ConfigParserUtil::getFactoryId)
+                                                .map(
+                                                        factory ->
+                                                                PluginIdentifier.of(
+                                                                        CollectionConstants
+                                                                                .SEATUNNEL_PLUGIN,
+                                                                        CollectionConstants
+                                                                                .TRANSFORM_PLUGIN,
+                                                                        factory))),
+                                sinkConfigs.stream()
+                                        .map(ConfigParserUtil::getFactoryId)
+                                        .map(
+                                                factory ->
+                                                        PluginIdentifier.of(
+                                                                CollectionConstants
+                                                                        .SEATUNNEL_PLUGIN,
+                                                                CollectionConstants.SINK_PLUGIN,
+                                                                factory)))
+                        .collect(Collectors.toList());
+        return new SeaTunnelSinkPluginDiscovery().getPluginJarPaths(factoryIds);
     }
 
     private void fillUsedFactoryUrls(List<Action> actions, Set<URL> result) {
@@ -158,86 +287,59 @@ public class MultipleTableJobConfigParser {
                 });
     }
 
-    void addCommonPluginJarsToAction(Action action) {
-        action.getJarUrls().addAll(commonPluginJars);
-        if (!action.getUpstream().isEmpty()) {
-            action.getUpstream().forEach(this::addCommonPluginJarsToAction);
-        }
-    }
-
-    private void fillJobConfig() {
+    private void fillJobConfigAndCommonJars() {
         jobConfig.getJobContext().setJobMode(envOptions.get(EnvCommonOptions.JOB_MODE));
         if (StringUtils.isEmpty(jobConfig.getName())
-                || jobConfig.getName().equals(Constants.LOGO)) {
+                || jobConfig.getName().equals(Constants.LOGO)
+                || jobConfig.getName().equals(EnvCommonOptions.JOB_NAME.defaultValue())) {
             jobConfig.setName(envOptions.get(EnvCommonOptions.JOB_NAME));
         }
-        envOptions
-                .getOptional(EnvCommonOptions.CHECKPOINT_INTERVAL)
-                .ifPresent(
-                        interval ->
-                                jobConfig
-                                        .getEnvOptions()
-                                        .put(EnvCommonOptions.CHECKPOINT_INTERVAL.key(), interval));
+        jobConfig.getEnvOptions().putAll(envOptions.getSourceMap());
+        this.commonPluginJars.addAll(
+                new ArrayList<>(
+                        Common.getThirdPartyJars(
+                                        jobConfig
+                                                .getEnvOptions()
+                                                .getOrDefault(EnvCommonOptions.JARS.key(), "")
+                                                .toString())
+                                .stream()
+                                .map(Path::toUri)
+                                .map(
+                                        uri -> {
+                                            try {
+                                                return uri.toURL();
+                                            } catch (MalformedURLException e) {
+                                                throw new SeaTunnelEngineException(
+                                                        "the uri of jar illegal:" + uri, e);
+                                            }
+                                        })
+                                .collect(Collectors.toList())));
+        log.info("add common jar in plugins :{}", commonPluginJars);
     }
 
-    public Tuple2<String, List<Tuple2<CatalogTable, Action>>> parserSource(
-            Config sourceConfig, ClassLoader classLoader) {
-        List<CatalogTable> catalogTables =
-                CatalogTableUtil.getCatalogTables(sourceConfig, classLoader);
-        if (catalogTables.isEmpty()) {
-            throw new JobDefineCheckException(
-                    "The source needs catalog table, please configure `catalog` or `schema` options.");
+    private static <T extends Factory> boolean isFallback(
+            ClassLoader classLoader,
+            Class<T> factoryClass,
+            String factoryId,
+            Consumer<T> virtualCreator) {
+        Optional<T> factory =
+                FactoryUtil.discoverOptionalFactory(classLoader, factoryClass, factoryId);
+        if (!factory.isPresent()) {
+            return true;
         }
-        ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(sourceConfig);
-        String factoryId = getFactoryId(readonlyConfig);
-        String tableId =
-                readonlyConfig.getOptional(CommonOptions.RESULT_TABLE_NAME).orElse("default");
-
-        if (parsingMode == ParsingMode.SHARDING) {
-            catalogTables = Collections.singletonList(catalogTables.get(0));
-        }
-        List<Tuple2<SeaTunnelSource<Object, SourceSplit, Serializable>, List<CatalogTable>>>
-                sources =
-                        FactoryUtil.createAndPrepareSource(
-                                catalogTables, readonlyConfig, classLoader, factoryId);
-
-        // get factory urls
-        Set<URL> factoryUrls = new HashSet<>();
-        URL factoryUrl =
-                FactoryUtil.getFactoryUrl(
-                        FactoryUtil.discoverFactory(
-                                classLoader, TableSourceFactory.class, factoryId));
-        factoryUrls.add(factoryUrl);
-        getCatalogFactoryUrl(sourceConfig, classLoader).ifPresent(factoryUrls::add);
-
-        List<Tuple2<CatalogTable, Action>> actions = new ArrayList<>();
-        int parallelism = getParallelism(readonlyConfig);
-        for (Tuple2<SeaTunnelSource<Object, SourceSplit, Serializable>, List<CatalogTable>> tuple2 :
-                sources) {
-            long id = idGenerator.getNextId();
-            SourceAction<Object, SourceSplit, Serializable> action =
-                    new SourceAction<>(id, factoryId, tuple2._1(), factoryUrls);
-            action.setParallelism(parallelism);
-            for (CatalogTable catalogTable : tuple2._2()) {
-                actions.add(new Tuple2<>(catalogTable, action));
+        try {
+            virtualCreator.accept(factory.get());
+        } catch (Exception e) {
+            if (e instanceof UnsupportedOperationException
+                    && "The Factory has not been implemented and the deprecated Plugin will be used."
+                            .equals(e.getMessage())) {
+                log.warn(
+                        "The Factory has not been implemented and the deprecated Plugin will be used.");
+                return true;
             }
+            log.debug(ExceptionUtils.getMessage(e));
         }
-        return new Tuple2<>(tableId, actions);
-    }
-
-    public static Optional<URL> getCatalogFactoryUrl(Config config, ClassLoader classLoader) {
-        // catalog url
-        ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(config);
-        Map<String, String> catalogOptions =
-                readonlyConfig.getOptional(CatalogOptions.CATALOG_OPTIONS).orElse(new HashMap<>());
-        // TODO: fallback key
-        String factoryId =
-                catalogOptions.getOrDefault(
-                        CommonOptions.FACTORY_ID.key(),
-                        readonlyConfig.get(CommonOptions.PLUGIN_NAME));
-        Optional<CatalogFactory> optionalFactory =
-                FactoryUtil.discoverOptionalFactory(classLoader, CatalogFactory.class, factoryId);
-        return optionalFactory.map(FactoryUtil::getFactoryUrl);
+        return false;
     }
 
     private int getParallelism(ReadonlyConfig config) {
@@ -247,76 +349,399 @@ public class MultipleTableJobConfigParser {
                         .orElse(envOptions.get(CommonOptions.PARALLELISM)));
     }
 
-    public List<SinkAction<?, ?, ?, ?>> parserSink(
+    public Tuple2<String, List<Tuple2<CatalogTable, Action>>> parseSource(
+            int configIndex, Config sourceConfig, ClassLoader classLoader) {
+        final ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(sourceConfig);
+        final String factoryId = getFactoryId(readonlyConfig);
+        final String tableId =
+                readonlyConfig.getOptional(CommonOptions.RESULT_TABLE_NAME).orElse(DEFAULT_ID);
+
+        final int parallelism = getParallelism(readonlyConfig);
+
+        boolean fallback =
+                isFallback(
+                        classLoader,
+                        TableSourceFactory.class,
+                        factoryId,
+                        (factory) -> factory.createSource(null));
+
+        if (fallback) {
+            Tuple2<CatalogTable, Action> tuple =
+                    fallbackParser.parseSource(sourceConfig, jobConfig, tableId, parallelism);
+            return new Tuple2<>(tableId, Collections.singletonList(tuple));
+        }
+
+        Tuple2<SeaTunnelSource<Object, SourceSplit, Serializable>, List<CatalogTable>> tuple2 =
+                FactoryUtil.createAndPrepareSource(readonlyConfig, classLoader, factoryId);
+
+        Set<URL> factoryUrls = new HashSet<>();
+        factoryUrls.addAll(getSourcePluginJarPaths(sourceConfig));
+
+        List<Tuple2<CatalogTable, Action>> actions = new ArrayList<>();
+        long id = idGenerator.getNextId();
+        String actionName = JobConfigParser.createSourceActionName(configIndex, factoryId);
+        SeaTunnelSource<Object, SourceSplit, Serializable> source = tuple2._1();
+        source.setJobContext(jobConfig.getJobContext());
+        PluginUtil.ensureJobModeMatch(jobConfig.getJobContext(), source);
+        SourceAction<Object, SourceSplit, Serializable> action =
+                new SourceAction<>(id, actionName, tuple2._1(), factoryUrls, new HashSet<>());
+        action.setParallelism(parallelism);
+        for (CatalogTable catalogTable : tuple2._2()) {
+            actions.add(new Tuple2<>(catalogTable, action));
+        }
+        return new Tuple2<>(tableId, actions);
+    }
+
+    public void parseTransforms(
+            List<? extends Config> transformConfigs,
+            ClassLoader classLoader,
+            LinkedHashMap<String, List<Tuple2<CatalogTable, Action>>> tableWithActionMap) {
+        if (CollectionUtils.isEmpty(transformConfigs) || transformConfigs.isEmpty()) {
+            return;
+        }
+        Queue<Config> configList = new LinkedList<>(transformConfigs);
+        int index = 0;
+        while (!configList.isEmpty()) {
+            parseTransform(index++, configList, classLoader, tableWithActionMap);
+        }
+    }
+
+    private void parseTransform(
+            int index,
+            Queue<Config> transforms,
+            ClassLoader classLoader,
+            LinkedHashMap<String, List<Tuple2<CatalogTable, Action>>> tableWithActionMap) {
+        Config config = transforms.poll();
+        final ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(config);
+        final String factoryId = getFactoryId(readonlyConfig);
+        // get jar urls
+        Set<URL> jarUrls = new HashSet<>();
+        jarUrls.addAll(getTransformPluginJarPaths(config));
+        final List<String> inputIds = getInputIds(readonlyConfig);
+
+        List<Tuple2<CatalogTable, Action>> inputs =
+                inputIds.stream()
+                        .map(tableWithActionMap::get)
+                        .filter(Objects::nonNull)
+                        .peek(
+                                input -> {
+                                    if (input.size() > 1) {
+                                        throw new JobDefineCheckException(
+                                                "Adding transform to multi-table source is not supported.");
+                                    }
+                                })
+                        .flatMap(Collection::stream)
+                        .collect(Collectors.toList());
+        if (inputs.isEmpty()) {
+            if (transforms.isEmpty()) {
+                // Tolerates incorrect configuration of simple graph
+                inputs = findLast(tableWithActionMap);
+            } else {
+                // The previous transform has not been created
+                transforms.offer(config);
+                return;
+            }
+        }
+
+        final String tableId =
+                readonlyConfig.getOptional(CommonOptions.RESULT_TABLE_NAME).orElse(DEFAULT_ID);
+
+        Set<Action> inputActions =
+                inputs.stream()
+                        .map(Tuple2::_2)
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+        checkProducedTypeEquals(inputActions);
+        int spareParallelism = inputs.get(0)._2().getParallelism();
+        int parallelism =
+                readonlyConfig.getOptional(CommonOptions.PARALLELISM).orElse(spareParallelism);
+        CatalogTable catalogTable = inputs.get(0)._1();
+        SeaTunnelTransform<?> transform =
+                FactoryUtil.createAndPrepareTransform(
+                        catalogTable, readonlyConfig, classLoader, factoryId);
+        transform.setJobContext(jobConfig.getJobContext());
+        long id = idGenerator.getNextId();
+        String actionName = JobConfigParser.createTransformActionName(index, factoryId);
+
+        TransformAction transformAction =
+                new TransformAction(
+                        id,
+                        actionName,
+                        new ArrayList<>(inputActions),
+                        transform,
+                        jarUrls,
+                        new HashSet<>());
+        transformAction.setParallelism(parallelism);
+        tableWithActionMap.put(
+                tableId,
+                Collections.singletonList(
+                        new Tuple2<>(transform.getProducedCatalogTable(), transformAction)));
+    }
+
+    public static SeaTunnelDataType<?> getProducedType(Action action) {
+        if (action instanceof SourceAction) {
+            try {
+                return ((SourceAction<?, ?, ?>) action)
+                        .getSource()
+                        .getProducedCatalogTables()
+                        .get(0)
+                        .getSeaTunnelRowType();
+            } catch (UnsupportedOperationException e) {
+                // TODO remove it when all connector use `getProducedCatalogTables`
+                return ((SourceAction<?, ?, ?>) action).getSource().getProducedType();
+            }
+        } else if (action instanceof TransformAction) {
+            return ((TransformAction) action)
+                    .getTransform()
+                    .getProducedCatalogTable()
+                    .getSeaTunnelRowType();
+        }
+        throw new UnsupportedOperationException();
+    }
+
+    public static void checkProducedTypeEquals(Set<Action> inputActions) {
+        SeaTunnelDataType<?> expectedType = getProducedType(new ArrayList<>(inputActions).get(0));
+        for (Action action : inputActions) {
+            SeaTunnelDataType<?> producedType = getProducedType(action);
+            if (!expectedType.equals(producedType)) {
+                throw new JobDefineCheckException(
+                        "Transform/Sink don't support processing data with two different structures.");
+            }
+        }
+    }
+
+    @Deprecated
+    private static <T> T findLast(LinkedHashMap<?, T> map) {
+        int size = map.size();
+        int i = 1;
+        for (T value : map.values()) {
+            if (i == size) {
+                return value;
+            }
+            i++;
+        }
+        // never execution
+        return null;
+    }
+
+    public List<SinkAction<?, ?, ?, ?>> parseSink(
+            int configIndex,
             Config sinkConfig,
             ClassLoader classLoader,
-            Map<String, List<Tuple2<CatalogTable, Action>>> tableWithActionMap) {
-        Map<TablePath, CatalogTable> tableMap =
-                CatalogTableUtil.getCatalogTables(sinkConfig, classLoader).stream()
-                        .collect(
-                                Collectors.toMap(
-                                        catalogTable -> catalogTable.getTableId().toTablePath(),
-                                        catalogTable -> catalogTable));
+            LinkedHashMap<String, List<Tuple2<CatalogTable, Action>>> tableWithActionMap) {
+
         ReadonlyConfig readonlyConfig = ReadonlyConfig.fromConfig(sinkConfig);
         String factoryId = getFactoryId(readonlyConfig);
-        String leftTableId =
-                readonlyConfig.getOptional(CommonOptions.SOURCE_TABLE_NAME).orElse("default");
-        List<Tuple2<CatalogTable, Action>> tableTuples = tableWithActionMap.get(leftTableId);
+        List<String> inputIds = getInputIds(readonlyConfig);
 
-        // get factory urls
-        Set<URL> factoryUrls = new HashSet<>();
-        URL factoryUrl =
-                FactoryUtil.getFactoryUrl(
-                        FactoryUtil.discoverFactory(
-                                classLoader, TableSinkFactory.class, factoryId));
-        factoryUrls.add(factoryUrl);
-        getCatalogFactoryUrl(sinkConfig, classLoader).ifPresent(factoryUrls::add);
+        List<List<Tuple2<CatalogTable, Action>>> inputVertices =
+                inputIds.stream()
+                        .map(tableWithActionMap::get)
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.toList());
+        if (inputVertices.isEmpty()) {
+            // Tolerates incorrect configuration of simple graph
+            inputVertices = Collections.singletonList(findLast(tableWithActionMap));
+        } else if (inputVertices.size() > 1) {
+            for (List<Tuple2<CatalogTable, Action>> inputVertex : inputVertices) {
+                if (inputVertex.size() > 1) {
+                    throw new JobDefineCheckException(
+                            "Sink don't support simultaneous writing of data from multi-table source and other sources.");
+                }
+            }
+        }
 
+        boolean fallback =
+                isFallback(
+                        classLoader,
+                        TableSinkFactory.class,
+                        factoryId,
+                        (factory) -> factory.createSink(null));
+        if (fallback) {
+            return fallbackParser.parseSinks(configIndex, inputVertices, sinkConfig, jobConfig);
+        }
+
+        // get jar urls
+        Set<URL> jarUrls = new HashSet<>();
+        jarUrls.addAll(getSinkPluginJarPaths(sinkConfig));
         List<SinkAction<?, ?, ?, ?>> sinkActions = new ArrayList<>();
-        for (Tuple2<CatalogTable, Action> tableTuple : tableTuples) {
-            CatalogTable catalogTable = tableTuple._1();
-            Action leftAction = tableTuple._2();
-            Optional<CatalogTable> insteadTable;
-            if (parsingMode == ParsingMode.SHARDING) {
-                insteadTable = tableMap.values().stream().findFirst();
-            } else {
-                // TODO: another table full name map
-                insteadTable =
-                        Optional.ofNullable(tableMap.get(catalogTable.getTableId().toTablePath()));
-            }
-            if (insteadTable.isPresent()) {
-                catalogTable = insteadTable.get();
-            }
-            SeaTunnelSink<?, ?, ?, ?> sink =
-                    FactoryUtil.createAndPrepareSink(
-                            catalogTable, readonlyConfig, classLoader, factoryId);
-            long id = idGenerator.getNextId();
+
+        // union
+        if (inputVertices.size() > 1) {
+            Set<Action> inputActions =
+                    inputVertices.stream()
+                            .flatMap(Collection::stream)
+                            .map(Tuple2::_2)
+                            .collect(Collectors.toCollection(LinkedHashSet::new));
+            checkProducedTypeEquals(inputActions);
+            Tuple2<CatalogTable, Action> inputActionSample = inputVertices.get(0).get(0);
             SinkAction<?, ?, ?, ?> sinkAction =
-                    new SinkAction<>(
-                            id,
+                    createSinkAction(
+                            inputActionSample._1(),
+                            inputActions,
+                            readonlyConfig,
+                            classLoader,
+                            jarUrls,
+                            new HashSet<>(),
                             factoryId,
-                            Collections.singletonList(leftAction),
-                            sink,
-                            factoryUrls,
-                            new SinkConfig(catalogTable.getTableId().toTablePath().toString()));
-            handleSaveMode(sink);
-            sinkAction.setParallelism(leftAction.getParallelism());
+                            inputActionSample._2().getParallelism(),
+                            configIndex);
+            sinkActions.add(sinkAction);
+            return sinkActions;
+        }
+
+        // TODO move it into tryGenerateMultiTableSink when we don't support sink template
+        // sink template
+        for (Tuple2<CatalogTable, Action> tuple : inputVertices.get(0)) {
+            SinkAction<?, ?, ?, ?> sinkAction =
+                    createSinkAction(
+                            tuple._1(),
+                            Collections.singleton(tuple._2()),
+                            readonlyConfig,
+                            classLoader,
+                            jarUrls,
+                            new HashSet<>(),
+                            factoryId,
+                            tuple._2().getParallelism(),
+                            configIndex);
             sinkActions.add(sinkAction);
         }
-        return sinkActions;
+        Optional<SinkAction<?, ?, ?, ?>> multiTableSink =
+                tryGenerateMultiTableSink(
+                        sinkActions, readonlyConfig, classLoader, factoryId, configIndex);
+        return multiTableSink
+                .<List<SinkAction<?, ?, ?, ?>>>map(Collections::singletonList)
+                .orElse(sinkActions);
     }
 
-    private static void handleSaveMode(SeaTunnelSink<?, ?, ?, ?> sink) {
-        if (SupportDataSaveMode.class.isAssignableFrom(sink.getClass())) {
-            SupportDataSaveMode saveModeSink = (SupportDataSaveMode) sink;
-            DataSaveMode dataSaveMode = saveModeSink.getDataSaveMode();
-            saveModeSink.handleSaveMode(dataSaveMode);
+    private Optional<SinkAction<?, ?, ?, ?>> tryGenerateMultiTableSink(
+            List<SinkAction<?, ?, ?, ?>> sinkActions,
+            ReadonlyConfig options,
+            ClassLoader classLoader,
+            String factoryId,
+            int configIndex) {
+        if (sinkActions.stream()
+                .anyMatch(action -> !(action.getSink() instanceof SupportMultiTableSink))) {
+            log.info("Unsupported multi table sink api, rollback to sink template");
+            return Optional.empty();
+        }
+        Map<String, SeaTunnelSink> sinks = new HashMap<>();
+        Set<URL> jars =
+                sinkActions.stream()
+                        .flatMap(a -> a.getJarUrls().stream())
+                        .collect(Collectors.toSet());
+        sinkActions.forEach(
+                action -> {
+                    SeaTunnelSink sink = action.getSink();
+                    String tableId = action.getConfig().getMultipleRowTableId();
+                    sinks.put(tableId, sink);
+                });
+        SeaTunnelSink<?, ?, ?, ?> sink =
+                FactoryUtil.createMultiTableSink(sinks, options, classLoader);
+        String actionName =
+                JobConfigParser.createSinkActionName(configIndex, factoryId, "MultiTableSink");
+        SinkAction<?, ?, ?, ?> multiTableAction =
+                new SinkAction<>(
+                        idGenerator.getNextId(),
+                        actionName,
+                        sinkActions.get(0).getUpstream(),
+                        sink,
+                        jars,
+                        new HashSet<>());
+        multiTableAction.setParallelism(sinkActions.get(0).getParallelism());
+        return Optional.of(multiTableAction);
+    }
+
+    private SinkAction<?, ?, ?, ?> createSinkAction(
+            CatalogTable catalogTable,
+            Set<Action> inputActions,
+            ReadonlyConfig readonlyConfig,
+            ClassLoader classLoader,
+            Set<URL> factoryUrls,
+            Set<ConnectorJarIdentifier> connectorJarIdentifiers,
+            String factoryId,
+            int parallelism,
+            int configIndex) {
+        SeaTunnelSink<?, ?, ?, ?> sink =
+                FactoryUtil.createAndPrepareSink(
+                        catalogTable, readonlyConfig, classLoader, factoryId);
+        sink.setJobContext(jobConfig.getJobContext());
+        SinkConfig actionConfig =
+                new SinkConfig(catalogTable.getTableId().toTablePath().toString());
+        long id = idGenerator.getNextId();
+        String actionName =
+                JobConfigParser.createSinkActionName(
+                        configIndex, factoryId, actionConfig.getMultipleRowTableId());
+        SinkAction<?, ?, ?, ?> sinkAction =
+                new SinkAction<>(
+                        id,
+                        actionName,
+                        new ArrayList<>(inputActions),
+                        sink,
+                        factoryUrls,
+                        connectorJarIdentifiers,
+                        actionConfig);
+        if (!isStartWithSavePoint) {
+            handleSaveMode(sink);
+        }
+        sinkAction.setParallelism(parallelism);
+        return sinkAction;
+    }
+
+    public void handleSaveMode(SeaTunnelSink<?, ?, ?, ?> sink) {
+        if (SupportSaveMode.class.isAssignableFrom(sink.getClass())) {
+            SupportSaveMode saveModeSink = (SupportSaveMode) sink;
+            if (envOptions
+                    .get(EnvCommonOptions.SAVEMODE_EXECUTE_LOCATION)
+                    .equals(SaveModeExecuteLocation.CLIENT)) {
+                log.warn(
+                        "SaveMode execute location on CLIENT is deprecated, please use CLUSTER instead.");
+                Optional<SaveModeHandler> saveModeHandler = saveModeSink.getSaveModeHandler();
+                if (saveModeHandler.isPresent()) {
+                    try (SaveModeHandler handler = saveModeHandler.get()) {
+                        handler.open();
+                        new SaveModeExecuteWrapper(handler).execute();
+                    } catch (Exception e) {
+                        throw new SeaTunnelRuntimeException(HANDLE_SAVE_MODE_FAILED, e);
+                    }
+                }
+            }
         }
     }
 
-    private static String getFactoryId(ReadonlyConfig readonlyConfig) {
-        return readonlyConfig
-                .getOptional(CommonOptions.FACTORY_ID)
-                .orElse(readonlyConfig.get(CommonOptions.PLUGIN_NAME));
+    private List<URL> getSourcePluginJarPaths(Config sourceConfig) {
+        SeaTunnelSourcePluginDiscovery sourcePluginDiscovery = new SeaTunnelSourcePluginDiscovery();
+        PluginIdentifier pluginIdentifier =
+                PluginIdentifier.of(
+                        CollectionConstants.SEATUNNEL_PLUGIN,
+                        CollectionConstants.SOURCE_PLUGIN,
+                        sourceConfig.getString(CollectionConstants.PLUGIN_NAME));
+        List<URL> pluginJarPaths =
+                sourcePluginDiscovery.getPluginJarPaths(Lists.newArrayList(pluginIdentifier));
+        return pluginJarPaths;
+    }
+
+    private List<URL> getTransformPluginJarPaths(Config transformConfig) {
+        SeaTunnelTransformPluginDiscovery transformPluginDiscovery =
+                new SeaTunnelTransformPluginDiscovery();
+        PluginIdentifier pluginIdentifier =
+                PluginIdentifier.of(
+                        CollectionConstants.SEATUNNEL_PLUGIN,
+                        CollectionConstants.TRANSFORM_PLUGIN,
+                        transformConfig.getString(CollectionConstants.PLUGIN_NAME));
+        List<URL> pluginJarPaths =
+                transformPluginDiscovery.getPluginJarPaths(Lists.newArrayList(pluginIdentifier));
+        return pluginJarPaths;
+    }
+
+    private List<URL> getSinkPluginJarPaths(Config sinkConfig) {
+        SeaTunnelSinkPluginDiscovery sinkPluginDiscovery = new SeaTunnelSinkPluginDiscovery();
+        PluginIdentifier pluginIdentifier =
+                PluginIdentifier.of(
+                        CollectionConstants.SEATUNNEL_PLUGIN,
+                        CollectionConstants.SINK_PLUGIN,
+                        sinkConfig.getString(CollectionConstants.PLUGIN_NAME));
+        List<URL> pluginJarPaths =
+                sinkPluginDiscovery.getPluginJarPaths(Lists.newArrayList(pluginIdentifier));
+        return pluginJarPaths;
     }
 }

@@ -25,14 +25,17 @@ import com.hazelcast.cluster.Address;
 import com.hazelcast.nio.ObjectDataInput;
 import com.hazelcast.nio.ObjectDataOutput;
 import com.hazelcast.nio.serialization.IdentifiedDataSerializable;
+import lombok.AllArgsConstructor;
 import lombok.Data;
 
 import java.io.IOException;
+import java.util.Map;
 
 /**
  * Used to describe the status of the current Worker, including address and resource assign status
  */
 @Data
+@AllArgsConstructor
 public class WorkerProfile implements IdentifiedDataSerializable {
 
     private Address address;
@@ -41,9 +44,13 @@ public class WorkerProfile implements IdentifiedDataSerializable {
 
     private ResourceProfile unassignedResource;
 
+    private boolean dynamicSlot;
+
     private SlotProfile[] assignedSlots;
 
     private SlotProfile[] unassignedSlots;
+
+    private Map<String, String> attributes;
 
     public WorkerProfile(Address address) {
         this.address = address;
@@ -77,6 +84,8 @@ public class WorkerProfile implements IdentifiedDataSerializable {
         for (SlotProfile unassignedSlot : unassignedSlots) {
             out.writeObject(unassignedSlot);
         }
+        out.writeBoolean(dynamicSlot);
+        out.writeObject(attributes);
     }
 
     @Override
@@ -94,5 +103,7 @@ public class WorkerProfile implements IdentifiedDataSerializable {
         for (int i = 0; i < unassignedSlots.length; i++) {
             unassignedSlots[i] = in.readObject();
         }
+        dynamicSlot = in.readBoolean();
+        attributes = in.readObject();
     }
 }

@@ -19,41 +19,44 @@ package org.apache.seatunnel.api.table.factory;
 
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.table.catalog.CatalogTable;
+import org.apache.seatunnel.common.utils.SeaTunnelException;
+
+import org.apache.commons.lang3.StringUtils;
 
 import lombok.Getter;
 
+import java.util.ArrayList;
 import java.util.List;
 
-public class TableFactoryContext {
+@Getter
+public abstract class TableFactoryContext {
 
-    private final List<CatalogTable> catalogTables;
-    @Getter private final ReadonlyConfig options;
+    private final ReadonlyConfig options;
     private final ClassLoader classLoader;
 
-    public TableFactoryContext(
-            List<CatalogTable> catalogTables, ReadonlyConfig options, ClassLoader classLoader) {
-        this.catalogTables = catalogTables;
+    public TableFactoryContext(ReadonlyConfig options, ClassLoader classLoader) {
         this.options = options;
         this.classLoader = classLoader;
     }
 
-    public ClassLoader getClassLoader() {
-        return this.classLoader;
-    }
-
-    /**
-     * Returns a list of tables that need to be processed.
-     *
-     * <p>By default, return only single table.
-     *
-     * <p>If you need multiple tables, implement {@link SupportMultipleTable}.
-     */
-    public List<CatalogTable> getCatalogTables() {
-        return catalogTables;
-    }
-
-    /** @return single table. */
-    public CatalogTable getCatalogTable() {
-        return catalogTables.get(0);
+    protected static void checkCatalogTableIllegal(List<CatalogTable> catalogTables) {
+        for (CatalogTable catalogTable : catalogTables) {
+            List<String> alreadyChecked = new ArrayList<>();
+            for (String fieldName : catalogTable.getTableSchema().getFieldNames()) {
+                if (StringUtils.isBlank(fieldName)) {
+                    throw new SeaTunnelException(
+                            String.format(
+                                    "Table %s field name cannot be empty",
+                                    catalogTable.getTablePath().getFullName()));
+                }
+                if (alreadyChecked.contains(fieldName)) {
+                    throw new SeaTunnelException(
+                            String.format(
+                                    "Table %s field %s duplicate",
+                                    catalogTable.getTablePath().getFullName(), fieldName));
+                }
+                alreadyChecked.add(fieldName);
+            }
+        }
     }
 }

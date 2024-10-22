@@ -17,10 +17,10 @@
 
 package org.apache.seatunnel.engine.core.dag.actions;
 
-import org.apache.seatunnel.api.table.type.MultipleRowType;
+import org.apache.seatunnel.api.table.catalog.CatalogTable;
+import org.apache.seatunnel.api.table.event.SchemaChangeEvent;
 import org.apache.seatunnel.api.table.type.Record;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
-import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 
 import com.hazelcast.collection.IQueue;
 import com.hazelcast.core.HazelcastInstance;
@@ -29,17 +29,22 @@ import lombok.Setter;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 import lombok.experimental.Tolerate;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+@Slf4j
 @SuperBuilder(toBuilder = true)
 @Getter
 @Setter
 @ToString
 public class ShuffleMultipleRowStrategy extends ShuffleStrategy {
-    private MultipleRowType inputRowType;
+    private List<CatalogTable> catalogTables;
     private String targetTableId;
 
     @Tolerate
@@ -49,20 +54,34 @@ public class ShuffleMultipleRowStrategy extends ShuffleStrategy {
     public Map<String, IQueue<Record<?>>> createShuffles(
             HazelcastInstance hazelcast, int pipelineId, int inputIndex) {
         Map<String, IQueue<Record<?>>> shuffleMap = new HashMap<>();
-        for (Map.Entry<String, SeaTunnelRowType> entry : inputRowType) {
-            String tableId = entry.getKey();
+        for (CatalogTable entry : catalogTables) {
+            String tableId = entry.getTableId().toTablePath().toString();
             String queueName = generateQueueName(pipelineId, inputIndex, tableId);
             IQueue<Record<?>> queue = getIQueue(hazelcast, queueName);
             // clear old data when job restore
             queue.clear();
             shuffleMap.put(queueName, queue);
         }
+
+        log.info(
+                "pipeline[{}] / reader[{}] assigned shuffle queue list: {}",
+                pipelineId,
+                inputIndex,
+                shuffleMap.keySet());
+
         return shuffleMap;
     }
 
     @Override
     public String createShuffleKey(Record<?> record, int pipelineId, int inputIndex) {
-        String tableId = ((SeaTunnelRow) record.getData()).getTableId();
+        String tableId;
+        if (record.getData() instanceof SeaTunnelRow) {
+            tableId = ((SeaTunnelRow) record.getData()).getTableId();
+        } else if (record.getData() instanceof SchemaChangeEvent) {
+            tableId = ((SchemaChangeEvent) record.getData()).tablePath().toString();
+        } else {
+            throw new UnsupportedOperationException("Unsupported record: " + record);
+        }
         return generateQueueName(pipelineId, inputIndex, tableId);
     }
 
@@ -75,18 +94,24 @@ public class ShuffleMultipleRowStrategy extends ShuffleStrategy {
             String queueName = generateQueueName(pipelineId, inputIndex, targetTableId);
             queues[inputIndex] = getIQueue(hazelcast, queueName);
         }
+
+        log.info(
+                "pipeline[{}] / writer[{}] assigned shuffle queue list: {}",
+                pipelineId,
+                targetIndex,
+                Stream.of(queues).map(e -> e.getName()).collect(Collectors.toList()));
+
         return queues;
     }
 
     private String generateQueueName(int pipelineId, int inputIndex, String tableId) {
-        return "ShuffleMultipleRow-Queue["
+        return "ShuffleMultipleRow-Queue_"
                 + getJobId()
-                + "-"
+                + "_"
                 + pipelineId
-                + "-"
+                + "_"
                 + inputIndex
-                + "-"
-                + tableId
-                + "]";
+                + "_"
+                + tableId;
     }
 }

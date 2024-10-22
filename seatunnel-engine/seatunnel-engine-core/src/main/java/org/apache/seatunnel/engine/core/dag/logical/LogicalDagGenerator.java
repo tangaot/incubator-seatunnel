@@ -26,8 +26,8 @@ import com.hazelcast.logging.Logger;
 import lombok.NonNull;
 
 import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,23 +38,33 @@ public class LogicalDagGenerator {
     private List<Action> actions;
     private JobConfig jobConfig;
     private IdGenerator idGenerator;
+    private boolean isStartWithSavePoint;
 
-    private final Map<Long, LogicalVertex> logicalVertexMap = new HashMap<>();
+    private final Map<Long, LogicalVertex> logicalVertexMap = new LinkedHashMap<>();
 
     /**
      * key: input vertex id; <br>
      * value: target vertices id;
      */
-    private final Map<Long, Set<Long>> inputVerticesMap = new HashMap<>();
+    private final Map<Long, LinkedHashSet<Long>> inputVerticesMap = new LinkedHashMap<>();
 
     public LogicalDagGenerator(
             @NonNull List<Action> actions,
             @NonNull JobConfig jobConfig,
             @NonNull IdGenerator idGenerator) {
+        this(actions, jobConfig, idGenerator, false);
+    }
+
+    public LogicalDagGenerator(
+            @NonNull List<Action> actions,
+            @NonNull JobConfig jobConfig,
+            @NonNull IdGenerator idGenerator,
+            boolean isStartWithSavePoint) {
         this.actions = actions;
         this.jobConfig = jobConfig;
         this.idGenerator = idGenerator;
-        if (actions.size() <= 0) {
+        this.isStartWithSavePoint = isStartWithSavePoint;
+        if (actions.isEmpty()) {
             throw new IllegalStateException("No actions define in the job. Cannot execute.");
         }
     }
@@ -65,6 +75,7 @@ public class LogicalDagGenerator {
         LogicalDag logicalDag = new LogicalDag(jobConfig, idGenerator);
         logicalDag.getEdges().addAll(logicalEdges);
         logicalDag.getLogicalVertexMap().putAll(logicalVertexMap);
+        logicalDag.setStartWithSavePoint(isStartWithSavePoint);
         return logicalDag;
     }
 
@@ -79,7 +90,8 @@ public class LogicalDagGenerator {
                         inputAction -> {
                             createLogicalVertex(inputAction);
                             inputVerticesMap
-                                    .computeIfAbsent(inputAction.getId(), id -> new HashSet<>())
+                                    .computeIfAbsent(
+                                            inputAction.getId(), id -> new LinkedHashSet<>())
                                     .add(logicalVertexId);
                         });
 
@@ -101,6 +113,6 @@ public class LogicalDagGenerator {
                                                                 logicalVertexMap.get(targetId)))
                                         .collect(Collectors.toList()))
                 .flatMap(Collection::stream)
-                .collect(Collectors.toSet());
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 }

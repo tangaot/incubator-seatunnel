@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 
 import com.beust.jcommander.internal.Nullable;
 import lombok.Getter;
+import lombok.Setter;
 
 import java.time.Instant;
 import java.util.List;
@@ -34,6 +35,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledFuture;
 
 public class PendingCheckpoint implements Checkpoint {
     private static final Logger LOG = LoggerFactory.getLogger(PendingCheckpoint.class);
@@ -51,11 +53,13 @@ public class PendingCheckpoint implements Checkpoint {
 
     private final Map<Long, TaskStatistics> taskStatistics;
 
-    private final Map<Long, ActionState> actionStates;
+    private final Map<ActionStateKey, ActionState> actionStates;
 
     private final CompletableFuture<CompletedCheckpoint> completableFuture;
 
     @Getter private CheckpointException failureCause;
+
+    @Setter ScheduledFuture<?> checkpointTimeOutFuture;
 
     public PendingCheckpoint(
             long jobId,
@@ -65,7 +69,7 @@ public class PendingCheckpoint implements Checkpoint {
             CheckpointType checkpointType,
             Set<Long> notYetAcknowledgedTasks,
             Map<Long, TaskStatistics> taskStatistics,
-            Map<Long, ActionState> actionStates) {
+            Map<ActionStateKey, ActionState> actionStates) {
         this.jobId = jobId;
         this.pipelineId = pipelineId;
         this.checkpointId = checkpointId;
@@ -106,7 +110,7 @@ public class PendingCheckpoint implements Checkpoint {
         return taskStatistics;
     }
 
-    protected Map<Long, ActionState> getActionStates() {
+    protected Map<ActionStateKey, ActionState> getActionStates() {
         return actionStates;
     }
 
@@ -127,7 +131,7 @@ public class PendingCheckpoint implements Checkpoint {
 
         long stateSize = 0;
         for (ActionSubtaskState state : states) {
-            ActionState actionState = actionStates.get(state.getActionId());
+            ActionState actionState = actionStates.get(state.getStateKey());
             if (actionState == null) {
                 continue;
             }
@@ -149,7 +153,7 @@ public class PendingCheckpoint implements Checkpoint {
     }
 
     protected boolean isFullyAcknowledged() {
-        return notYetAcknowledgedTasks.size() == 0;
+        return notYetAcknowledgedTasks.isEmpty();
     }
 
     private CompletedCheckpoint toCompletedCheckpoint() {
@@ -165,12 +169,22 @@ public class PendingCheckpoint implements Checkpoint {
     }
 
     public void abortCheckpoint(CheckpointCloseReason closedReason, @Nullable Throwable cause) {
-        if (closedReason.equals(CheckpointCloseReason.CHECKPOINT_COORDINATOR_RESET)) {
+        if (closedReason.equals(CheckpointCloseReason.CHECKPOINT_COORDINATOR_RESET)
+                || closedReason.equals(CheckpointCloseReason.PIPELINE_END)) {
             completableFuture.complete(null);
         } else {
             this.failureCause = new CheckpointException(closedReason, cause);
             completableFuture.completeExceptionally(failureCause);
         }
+    }
+
+    // Avoid memory leak in ScheduledThreadPoolExecutor due to overly long timeout settings causing
+    // numerous completed checkpoints to remain
+    public void abortCheckpointTimeoutFutureWhenIsCompleted() {
+        if (checkpointTimeOutFuture == null) {
+            return;
+        }
+        checkpointTimeOutFuture.cancel(false);
     }
 
     public String getInfo() {

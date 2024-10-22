@@ -17,16 +17,19 @@
 
 package org.apache.seatunnel.engine.server.checkpoint;
 
+import lombok.ToString;
+
 import java.io.Serializable;
 import java.util.Arrays;
 import java.util.List;
 
+@ToString
 public class ActionState implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    /** The id of the action. */
-    private final String actionId;
+    /** The key of the action state. */
+    private final ActionStateKey stateKey;
 
     /** The handles to states created by the parallel actions: action index -> action state. */
     private final List<ActionSubtaskState> subtaskStates;
@@ -36,14 +39,14 @@ public class ActionState implements Serializable {
     /** The parallelism of the action when it was checkpointed. */
     private final int parallelism;
 
-    public ActionState(String actionId, int parallelism) {
-        this.actionId = actionId;
+    public ActionState(ActionStateKey stateKey, int parallelism) {
+        this.stateKey = stateKey;
         this.subtaskStates = Arrays.asList(new ActionSubtaskState[parallelism]);
         this.parallelism = parallelism;
     }
 
-    public String getActionId() {
-        return actionId;
+    public ActionStateKey getStateKey() {
+        return stateKey;
     }
 
     public List<ActionSubtaskState> getSubtaskStates() {

@@ -35,6 +35,7 @@ done
 
 PRG_DIR=`dirname "$PRG"`
 APP_DIR=`cd "$PRG_DIR/.." >/dev/null; pwd`
+SEATUNNEL_HOME=${APP_DIR}
 CONF_DIR=${APP_DIR}/config
 APP_JAR=${APP_DIR}/starter/seatunnel-starter.jar
 APP_MAIN="org.apache.seatunnel.core.starter.seatunnel.SeaTunnelClient"
@@ -68,6 +69,38 @@ if test ${JvmOption} ;then
     JAVA_OPTS="${JAVA_OPTS} ${JvmOption}"
 fi
 
+JAVA_OPTS="${JAVA_OPTS} -Dhazelcast.client.config=${HAZELCAST_CLIENT_CONFIG}"
+JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.config=${SEATUNNEL_CONFIG}"
+JAVA_OPTS="${JAVA_OPTS} -Dhazelcast.config=${HAZELCAST_CONFIG}"
+
+# Client Debug Config
+# Usage instructions:
+# If you need to debug your code in cluster mode, please enable this configuration option and listen to the specified
+# port in your IDE. After that, you can happily debug your code.
+# JAVA_OPTS="${JAVA_OPTS} -Xdebug -Xrunjdwp:transport=dt_socket,server=y,address=5000,suspend=n"
+
+# Log4j2 Config
+JAVA_OPTS="${JAVA_OPTS} -Dlog4j2.isThreadContextMapInheritable=true"
+if [ -e "${CONF_DIR}/log4j2_client.properties" ]; then
+  JAVA_OPTS="${JAVA_OPTS} -Dhazelcast.logging.type=log4j2 -Dlog4j2.configurationFile=${CONF_DIR}/log4j2_client.properties"
+  JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.path=${APP_DIR}/logs"
+  if [[ $args == *" -m local"* || $args == *" --master local"* || $args == *" -e local"* || $args == *" --deploy-mode local"* ]]; then
+    ntime=$(echo `date "+%N"`|sed -r 's/^0+//')
+    JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.file_name=seatunnel-starter-client-$((`date '+%s'`*1000+$ntime/1000000))"
+  else
+      JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.file_name=seatunnel-starter-client"
+  fi
+fi
+
+CLASS_PATH=${APP_DIR}/lib/*:${APP_JAR}
+
+while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ ! $line == \#* ]]; then
+        JAVA_OPTS="$JAVA_OPTS $line"
+    fi
+done < ${APP_DIR}/config/jvm_client_options
+
+# Parse JvmOption from command line, it should be parsed after jvm_client_options
 for i in "$@"
 do
   if [[ "${i}" == *"JvmOption"* ]]; then
@@ -76,28 +109,5 @@ do
     break
   fi
 done
-
-JAVA_OPTS="${JAVA_OPTS} -Dhazelcast.client.config=${HAZELCAST_CLIENT_CONFIG}"
-JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.config=${SEATUNNEL_CONFIG}"
-JAVA_OPTS="${JAVA_OPTS} -Dhazelcast.config=${HAZELCAST_CONFIG}"
-
-# Log4j2 Config
-if [ -e "${CONF_DIR}/log4j2_client.properties" ]; then
-  JAVA_OPTS="${JAVA_OPTS} -Dlog4j2.configurationFile=${CONF_DIR}/log4j2_client.properties"
-  JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.path=${APP_DIR}/logs"
-  if [[ $args == *" -m local"* || $args == *" --master local"* || $args == *" -e local"* || $args == *" --deploy-mode local"* ]]; then
-    JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.file_name=seatunnel-starter-client-$((`date '+%s'`*1000+`date '+%N'`/1000000))"
-  else
-      JAVA_OPTS="${JAVA_OPTS} -Dseatunnel.logs.file_name=seatunnel-starter-client"
-  fi
-fi
-
-CLASS_PATH=${APP_DIR}/lib/*:${APP_JAR}
-
-ST_TMPDIR=`java -cp ${CLASS_PATH} org.apache.seatunnel.core.starter.seatunnel.jvm.TempDirectory`
-# The JVM options parser produces the final JVM options to start seatunnel-engine.
-JVM_OPTIONS=`java -cp ${CLASS_PATH} org.apache.seatunnel.core.starter.seatunnel.jvm.JvmOptionsParser ${CONF_DIR}`
-JAVA_OPTS="${JAVA_OPTS} ${JVM_OPTIONS//\$\{loggc\}/${ST_TMPDIR}}"
-echo "JAVA_OPTS:" ${JAVA_OPTS}
 
 java ${JAVA_OPTS} -cp ${CLASS_PATH} ${APP_MAIN} ${args}

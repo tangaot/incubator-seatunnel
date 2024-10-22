@@ -28,12 +28,14 @@ import org.apache.seatunnel.api.source.SourceSplitEnumerator;
 import org.apache.seatunnel.api.source.SupportColumnProjection;
 import org.apache.seatunnel.api.source.SupportParallelism;
 import org.apache.seatunnel.api.table.catalog.CatalogTableUtil;
+import org.apache.seatunnel.api.table.catalog.schema.TableSchemaOptions;
 import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 import org.apache.seatunnel.common.config.CheckConfigUtil;
 import org.apache.seatunnel.common.config.CheckResult;
 import org.apache.seatunnel.common.constants.PluginType;
+import org.apache.seatunnel.common.utils.ExceptionUtils;
 import org.apache.seatunnel.connectors.seatunnel.influxdb.client.InfluxDBClient;
 import org.apache.seatunnel.connectors.seatunnel.influxdb.config.SourceConfig;
 import org.apache.seatunnel.connectors.seatunnel.influxdb.exception.InfluxdbConnectorErrorCode;
@@ -50,6 +52,8 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.apache.seatunnel.connectors.seatunnel.influxdb.config.SourceConfig.SQL;
@@ -75,7 +79,7 @@ public class InfluxDBSource
     @Override
     public void prepare(Config config) throws PrepareFailException {
         CheckResult result =
-                CheckConfigUtil.checkAllExists(config, SQL.key(), CatalogTableUtil.SCHEMA.key());
+                CheckConfigUtil.checkAllExists(config, SQL.key(), TableSchemaOptions.SCHEMA.key());
         if (!result.isSuccess()) {
             throw new InfluxdbConnectorException(
                     SeaTunnelAPIErrorCode.CONFIG_VALIDATION_FAILED,
@@ -92,7 +96,7 @@ public class InfluxDBSource
                     SeaTunnelAPIErrorCode.CONFIG_VALIDATION_FAILED,
                     String.format(
                             "PluginName: %s, PluginType: %s, Message: %s",
-                            getPluginName(), PluginType.SOURCE, e));
+                            getPluginName(), PluginType.SOURCE, ExceptionUtils.getMessage(e)));
         }
     }
 
@@ -127,7 +131,16 @@ public class InfluxDBSource
 
     private List<Integer> initColumnsIndex(InfluxDB influxdb) {
         // query one row to get column info
-        String query = sourceConfig.getSql() + QUERY_LIMIT;
+        String sql = sourceConfig.getSql();
+        String query = sql + QUERY_LIMIT;
+        // if sql contains tz(), can't be append QUERY_LIMIT at last . see bug #4231
+        int start = containTzFunction(sql.toLowerCase());
+        if (start > 0) {
+            StringBuilder tmpSql = new StringBuilder(sql);
+            tmpSql.insert(start - 1, QUERY_LIMIT).append(" ");
+            query = tmpSql.toString();
+        }
+
         try {
             QueryResult queryResult = influxdb.query(new Query(query, sourceConfig.getDatabase()));
 
@@ -143,5 +156,15 @@ public class InfluxDBSource
                     "Get column index of query result exception",
                     e);
         }
+    }
+
+    private static int containTzFunction(String sql) {
+        Pattern pattern = Pattern.compile("tz\\(.*\\)");
+        Matcher matcher = pattern.matcher(sql);
+        if (matcher.find()) {
+            int start = matcher.start();
+            return start;
+        }
+        return -1;
     }
 }

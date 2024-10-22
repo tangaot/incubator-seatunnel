@@ -46,10 +46,10 @@ public class SeaTunnelConfig {
                 .getJoin()
                 .getMulticastConfig()
                 .setMulticastPort(Constant.DEFAULT_SEATUNNEL_MULTICAST_PORT);
-        hazelcastConfig.setClusterName(Constant.DEFAULT_SEATUNNEL_CLUSTER_NAME);
         hazelcastConfig
                 .getHotRestartPersistenceConfig()
                 .setBaseDir(new File(seatunnelHome(), "recovery").getAbsoluteFile());
+        System.setProperty("hazelcast.compat.classloading.cache.disabled", "true");
     }
 
     /**

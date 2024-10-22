@@ -21,6 +21,7 @@ import org.apache.seatunnel.api.table.type.Record;
 import org.apache.seatunnel.api.transform.Collector;
 import org.apache.seatunnel.api.transform.SeaTunnelTransform;
 import org.apache.seatunnel.engine.core.dag.actions.TransformChainAction;
+import org.apache.seatunnel.engine.server.checkpoint.ActionStateKey;
 import org.apache.seatunnel.engine.server.checkpoint.ActionSubtaskState;
 import org.apache.seatunnel.engine.server.checkpoint.CheckpointBarrier;
 import org.apache.seatunnel.engine.server.task.SeaTunnelTask;
@@ -74,11 +75,11 @@ public class TransformFlowLifeCycle<T> extends ActionFlowLifeCycle
     public void received(Record<?> record) {
         if (record.getData() instanceof Barrier) {
             CheckpointBarrier barrier = (CheckpointBarrier) record.getData();
-            if (barrier.prepareClose()) {
+            if (barrier.prepareClose(this.runningTask.getTaskLocation())) {
                 prepareClose = true;
             }
             if (barrier.snapshot()) {
-                runningTask.addState(barrier, action.getId(), Collections.emptyList());
+                runningTask.addState(barrier, ActionStateKey.of(action), Collections.emptyList());
             }
             // ack after #addState
             runningTask.ack(barrier);

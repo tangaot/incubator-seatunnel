@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class DefaultSlotService implements SlotService {
 
     private static final ILogger LOGGER = Logger.getLogger(DefaultSlotService.class);
-    private static final long DEFAULT_HEARTBEAT_TIMEOUT = 2000;
+    private static final long DEFAULT_HEARTBEAT_TIMEOUT = 5000;
     private final NodeEngineImpl nodeEngine;
 
     private AtomicReference<ResourceProfile> unassignedResource;
@@ -149,6 +149,7 @@ public class DefaultSlotService implements SlotService {
         return new SlotAndWorkerProfile(getWorkerProfile(), profile);
     }
 
+    @Override
     public SlotContext getSlotContext(SlotProfile slotProfile) {
         if (!contexts.containsKey(slotProfile.getSlotID())) {
             throw new WrongTargetSlotException(
@@ -196,6 +197,11 @@ public class DefaultSlotService implements SlotService {
         }
     }
 
+    /**
+     * Select the best match slot for the profile.
+     *
+     * @return the best match slot, null if no suitable slot found.
+     */
     private SlotProfile selectBestMatchSlot(ResourceProfile profile) {
         if (unassignedSlots.isEmpty() && !config.isDynamicSlot()) {
             return null;
@@ -258,6 +264,8 @@ public class DefaultSlotService implements SlotService {
         workerProfile.setAssignedSlots(assignedSlots.values().toArray(new SlotProfile[0]));
         workerProfile.setUnassignedSlots(unassignedSlots.values().toArray(new SlotProfile[0]));
         workerProfile.setUnassignedResource(unassignedResource.get());
+        workerProfile.setAttributes(nodeEngine.getLocalMember().getAttributes());
+        workerProfile.setDynamicSlot(config.isDynamicSlot());
         return workerProfile;
     }
 

@@ -18,6 +18,7 @@
 package org.apache.seatunnel.connectors.seatunnel.cdc.mysql.source.reader.fetch;
 
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
+import org.apache.seatunnel.common.utils.ReflectionUtils;
 import org.apache.seatunnel.connectors.cdc.base.config.JdbcSourceConfig;
 import org.apache.seatunnel.connectors.cdc.base.dialect.JdbcDataSourceDialect;
 import org.apache.seatunnel.connectors.cdc.base.relational.JdbcSourceEventDispatcher;
@@ -29,6 +30,7 @@ import org.apache.seatunnel.connectors.cdc.base.source.split.SourceSplitBase;
 import org.apache.seatunnel.connectors.cdc.debezium.EmbeddedDatabaseHistory;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mysql.config.MySqlSourceConfig;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mysql.source.offset.BinlogOffset;
+import org.apache.seatunnel.connectors.seatunnel.cdc.mysql.utils.MySqlConnectionUtils;
 import org.apache.seatunnel.connectors.seatunnel.cdc.mysql.utils.MySqlUtils;
 
 import org.apache.kafka.connect.data.Struct;
@@ -46,6 +48,7 @@ import io.debezium.connector.mysql.MySqlConnectorConfig;
 import io.debezium.connector.mysql.MySqlDatabaseSchema;
 import io.debezium.connector.mysql.MySqlErrorHandler;
 import io.debezium.connector.mysql.MySqlOffsetContext;
+import io.debezium.connector.mysql.MySqlPartition;
 import io.debezium.connector.mysql.MySqlStreamingChangeEventSourceMetrics;
 import io.debezium.connector.mysql.MySqlTaskContext;
 import io.debezium.connector.mysql.MySqlTopicSelector;
@@ -55,6 +58,8 @@ import io.debezium.pipeline.ErrorHandler;
 import io.debezium.pipeline.metrics.SnapshotChangeEventSourceMetrics;
 import io.debezium.pipeline.source.spi.EventMetadataProvider;
 import io.debezium.pipeline.spi.OffsetContext;
+import io.debezium.pipeline.spi.Offsets;
+import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import io.debezium.relational.Table;
 import io.debezium.relational.TableId;
 import io.debezium.relational.Tables;
@@ -62,15 +67,22 @@ import io.debezium.relational.history.TableChanges;
 import io.debezium.schema.DataCollectionId;
 import io.debezium.schema.TopicSelector;
 import io.debezium.util.Collect;
+import lombok.extern.slf4j.Slf4j;
 
+import java.io.IOException;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.apache.seatunnel.connectors.seatunnel.cdc.mysql.source.offset.BinlogOffset.BINLOG_FILENAME_OFFSET_KEY;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mysql.utils.MySqlConnectionUtils.createBinaryClient;
+import static org.apache.seatunnel.connectors.seatunnel.cdc.mysql.utils.MySqlConnectionUtils.createMySqlConnection;
 
 /** The context for fetch task that fetching data of snapshot split from MySQL data source. */
+@Slf4j
 public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
 
     private static final Logger LOG = LoggerFactory.getLogger(MySqlSourceFetchTaskContext.class);
@@ -81,21 +93,21 @@ public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
     private MySqlDatabaseSchema databaseSchema;
     private MySqlTaskContextImpl taskContext;
     private MySqlOffsetContext offsetContext;
-    private SnapshotChangeEventSourceMetrics snapshotChangeEventSourceMetrics;
+    private SnapshotChangeEventSourceMetrics<MySqlPartition> snapshotChangeEventSourceMetrics;
     private MySqlStreamingChangeEventSourceMetrics streamingChangeEventSourceMetrics;
     private TopicSelector<TableId> topicSelector;
-    private JdbcSourceEventDispatcher dispatcher;
+    private JdbcSourceEventDispatcher<MySqlPartition> dispatcher;
+    private MySqlPartition mySqlPartition;
     private ChangeEventQueue<DataChangeEvent> queue;
     private MySqlErrorHandler errorHandler;
+    private RelationalDatabaseConnectorConfig dbzConnectorConfig;
 
     public MySqlSourceFetchTaskContext(
-            JdbcSourceConfig sourceConfig,
-            JdbcDataSourceDialect dataSourceDialect,
-            MySqlConnection connection,
-            BinaryLogClient binaryLogClient) {
+            JdbcSourceConfig sourceConfig, JdbcDataSourceDialect dataSourceDialect) {
         super(sourceConfig, dataSourceDialect);
-        this.connection = connection;
-        this.binaryLogClient = binaryLogClient;
+        this.dbzConnectorConfig = sourceConfig.getDbzConnectorConfig();
+        this.connection = createMySqlConnection(sourceConfig.getDbzConfiguration());
+        this.binaryLogClient = createBinaryClient(sourceConfig.getDbzConfiguration());
         this.metadataProvider = new MySqlEventMetadataProvider();
     }
 
@@ -109,16 +121,23 @@ public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
         this.topicSelector = MySqlTopicSelector.defaultSelector(connectorConfig);
 
         this.databaseSchema =
-                MySqlUtils.createMySqlDatabaseSchema(connectorConfig, tableIdCaseInsensitive);
+                MySqlConnectionUtils.createMySqlDatabaseSchema(
+                        connectorConfig, tableIdCaseInsensitive);
         this.offsetContext =
                 loadStartingOffsetState(
                         new MySqlOffsetContext.Loader(connectorConfig), sourceSplitBase);
+        this.mySqlPartition = new MySqlPartition(connectorConfig.getLogicalName());
+
         validateAndLoadDatabaseHistory(offsetContext, databaseSchema);
 
         this.taskContext =
                 new MySqlTaskContextImpl(connectorConfig, databaseSchema, binaryLogClient);
+
+        // If in the snapshot read phase and enable exactly-once, the queue needs to be set to a
+        // maximum size of `Integer.MAX_VALUE` (buffered a current snapshot all data). otherwise,
+        // use the configuration queue size.
         final int queueSize =
-                sourceSplitBase.isSnapshotSplit()
+                sourceSplitBase.isSnapshotSplit() && isExactlyOnce()
                         ? Integer.MAX_VALUE
                         : getSourceConfig().getDbzConnectorConfig().getMaxQueueSize();
         this.queue =
@@ -135,7 +154,7 @@ public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                         // .buffering()
                         .build();
         this.dispatcher =
-                new JdbcSourceEventDispatcher(
+                new JdbcSourceEventDispatcher<>(
                         connectorConfig,
                         topicSelector,
                         databaseSchema,
@@ -156,7 +175,19 @@ public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                 (MySqlStreamingChangeEventSourceMetrics)
                         changeEventSourceMetricsFactory.getStreamingMetrics(
                                 taskContext, queue, metadataProvider);
-        this.errorHandler = new MySqlErrorHandler(connectorConfig.getLogicalName(), queue);
+        this.errorHandler = new MySqlErrorHandler(connectorConfig, queue);
+    }
+
+    @Override
+    public void close() {
+        try {
+            this.connection.close();
+            this.binaryLogClient.disconnect();
+        } catch (SQLException e) {
+            log.warn("Failed to close connection", e);
+        } catch (IOException e) {
+            log.warn("Failed to close binaryLogClient", e);
+        }
     }
 
     @Override
@@ -186,7 +217,12 @@ public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
         return offsetContext;
     }
 
-    public SnapshotChangeEventSourceMetrics getSnapshotChangeEventSourceMetrics() {
+    @Override
+    public MySqlPartition getPartition() {
+        return mySqlPartition;
+    }
+
+    public SnapshotChangeEventSourceMetrics<MySqlPartition> getSnapshotChangeEventSourceMetrics() {
         return snapshotChangeEventSourceMetrics;
     }
 
@@ -206,11 +242,11 @@ public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
 
     @Override
     public SeaTunnelRowType getSplitType(Table table) {
-        return MySqlUtils.getSplitType(table);
+        return MySqlUtils.getSplitType(table, dbzConnectorConfig);
     }
 
     @Override
-    public JdbcSourceEventDispatcher getDispatcher() {
+    public JdbcSourceEventDispatcher<MySqlPartition> getDispatcher() {
         return dispatcher;
     }
 
@@ -277,7 +313,7 @@ public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
     private void validateAndLoadDatabaseHistory(
             MySqlOffsetContext offset, MySqlDatabaseSchema schema) {
         schema.initializeStorage();
-        schema.recover(offset);
+        schema.recover(Offsets.of(mySqlPartition, offset));
     }
 
     private void registerDatabaseHistory(SourceSplitBase sourceSplitBase) {
@@ -311,12 +347,26 @@ public class MySqlSourceFetchTaskContext extends JdbcSourceFetchTaskContext {
                 MySqlDatabaseSchema schema,
                 BinaryLogClient reusedBinaryLogClient) {
             super(config, schema);
-            this.reusedBinaryLogClient = reusedBinaryLogClient;
+            this.reusedBinaryLogClient = resetBinaryLogClient(reusedBinaryLogClient);
         }
 
         @Override
         public BinaryLogClient getBinaryLogClient() {
             return reusedBinaryLogClient;
+        }
+
+        /** reset the listener of binaryLogClient before fetch task start. */
+        private BinaryLogClient resetBinaryLogClient(BinaryLogClient binaryLogClient) {
+            Optional<Object> eventListenersField =
+                    ReflectionUtils.getField(
+                            binaryLogClient, BinaryLogClient.class, "eventListeners");
+            eventListenersField.ifPresent(o -> ((List<BinaryLogClient.EventListener>) o).clear());
+            Optional<Object> lifecycleListeners =
+                    ReflectionUtils.getField(
+                            binaryLogClient, BinaryLogClient.class, "lifecycleListeners");
+            lifecycleListeners.ifPresent(
+                    o -> ((List<BinaryLogClient.LifecycleListener>) o).clear());
+            return binaryLogClient;
         }
     }
 

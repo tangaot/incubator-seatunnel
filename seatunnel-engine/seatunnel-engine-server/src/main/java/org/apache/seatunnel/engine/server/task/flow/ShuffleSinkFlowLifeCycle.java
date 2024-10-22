@@ -17,9 +17,11 @@
 
 package org.apache.seatunnel.engine.server.task.flow;
 
+import org.apache.seatunnel.api.table.event.SchemaChangeEvent;
 import org.apache.seatunnel.api.table.type.Record;
 import org.apache.seatunnel.engine.core.dag.actions.ShuffleAction;
 import org.apache.seatunnel.engine.core.dag.actions.ShuffleStrategy;
+import org.apache.seatunnel.engine.server.checkpoint.ActionStateKey;
 import org.apache.seatunnel.engine.server.task.SeaTunnelTask;
 import org.apache.seatunnel.engine.server.task.record.Barrier;
 
@@ -34,8 +36,6 @@ import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 @SuppressWarnings("MagicNumber")
 @Slf4j
@@ -72,15 +72,18 @@ public class ShuffleSinkFlowLifeCycle extends AbstractFlowLifeCycle
     @Override
     public void received(Record<?> record) throws IOException {
         if (record.getData() instanceof Barrier) {
+            long startTime = System.currentTimeMillis();
+
             // flush shuffle buffer
             shuffleFlush();
 
             Barrier barrier = (Barrier) record.getData();
-            if (barrier.prepareClose()) {
+            if (barrier.prepareClose(runningTask.getTaskLocation())) {
                 prepareClose = true;
             }
             if (barrier.snapshot()) {
-                runningTask.addState(barrier, shuffleAction.getId(), Collections.emptyList());
+                runningTask.addState(
+                        barrier, ActionStateKey.of(shuffleAction), Collections.emptyList());
             }
             runningTask.ack(barrier);
 
@@ -93,6 +96,18 @@ public class ShuffleSinkFlowLifeCycle extends AbstractFlowLifeCycle
                     throw new RuntimeException(e);
                 }
             }
+
+            log.debug(
+                    "trigger barrier [{}] finished, cost: {}ms. taskLocation: [{}]",
+                    barrier.getId(),
+                    System.currentTimeMillis() - startTime,
+                    runningTask.getTaskLocation());
+        } else if (record.getData() instanceof SchemaChangeEvent) {
+            if (prepareClose) {
+                return;
+            }
+
+            shuffleItem(record);
         } else {
             if (prepareClose) {
                 return;
@@ -106,46 +121,9 @@ public class ShuffleSinkFlowLifeCycle extends AbstractFlowLifeCycle
     public void close() throws IOException {
         super.close();
         for (Map.Entry<String, IQueue<Record<?>>> shuffleItem : shuffles.entrySet()) {
-            log.info("destroy shuffle queue[{}]", shuffleItem.getKey());
+            log.info("destroy shuffle queue: {}", shuffleItem.getKey());
             shuffleItem.getValue().destroy();
         }
-    }
-
-    public CompletableFuture<Boolean> registryScheduleFlushTask(
-            ScheduledExecutorService scheduledExecutorService) {
-        // todo Register when the job started, Unload at the end(pause/cancel/crash) of the job
-        CompletableFuture<Boolean> completedFuture = new CompletableFuture();
-        Runnable scheduleFlushTask =
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        if (!prepareClose
-                                && shuffleBufferSize > 0
-                                && System.currentTimeMillis() - lastModify
-                                        > shuffleBatchFlushInterval) {
-
-                            try {
-                                shuffleFlush();
-                            } catch (Exception e) {
-                                log.error("Execute schedule task error.", e);
-                            }
-                        }
-
-                        // submit next task
-                        if (!prepareClose) {
-                            Runnable nextScheduleFlushTask = this;
-                            scheduledExecutorService.schedule(
-                                    nextScheduleFlushTask,
-                                    shuffleBatchFlushInterval,
-                                    TimeUnit.MILLISECONDS);
-                        } else {
-                            completedFuture.complete(true);
-                        }
-                    }
-                };
-        scheduledExecutorService.schedule(
-                scheduleFlushTask, shuffleBatchFlushInterval, TimeUnit.MILLISECONDS);
-        return completedFuture;
     }
 
     private synchronized void shuffleItem(Record<?> record) {
@@ -158,15 +136,14 @@ public class ShuffleSinkFlowLifeCycle extends AbstractFlowLifeCycle
                         && System.currentTimeMillis() - lastModify > shuffleBatchFlushInterval)) {
             shuffleFlush();
         }
-
-        lastModify = System.currentTimeMillis();
     }
 
     private synchronized void shuffleFlush() {
         for (Map.Entry<String, Queue<Record<?>>> shuffleBatch : shuffleBuffer.entrySet()) {
             IQueue<Record<?>> shuffleQueue = shuffles.get(shuffleBatch.getKey());
             Queue<Record<?>> shuffleQueueBatch = shuffleBatch.getValue();
-            if (!shuffleQueue.addAll(shuffleBatch.getValue())) {
+            if (shuffleQueue.remainingCapacity() <= 0
+                    || !shuffleQueue.addAll(shuffleBatch.getValue())) {
                 for (; ; ) {
                     Record<?> shuffleItem = shuffleQueueBatch.poll();
                     if (shuffleItem == null) {
@@ -182,5 +159,6 @@ public class ShuffleSinkFlowLifeCycle extends AbstractFlowLifeCycle
             shuffleQueueBatch.clear();
         }
         shuffleBufferSize = 0;
+        lastModify = System.currentTimeMillis();
     }
 }

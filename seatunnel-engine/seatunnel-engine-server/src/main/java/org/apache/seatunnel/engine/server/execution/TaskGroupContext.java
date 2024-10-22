@@ -17,11 +17,26 @@
 
 package org.apache.seatunnel.engine.server.execution;
 
+import lombok.AllArgsConstructor;
 import lombok.Data;
 
-@Data
-public class TaskGroupContext {
-    final TaskGroup taskGroup;
+import java.net.URL;
+import java.util.Collection;
+import java.util.concurrent.ConcurrentHashMap;
 
-    final ClassLoader classLoader;
+@Data
+@AllArgsConstructor
+public class TaskGroupContext {
+    private TaskGroup taskGroup;
+
+    private ConcurrentHashMap<Long, ClassLoader> classLoaders;
+    private ConcurrentHashMap<Long, Collection<URL>> jars;
+
+    public ClassLoader getClassLoader(long taskId) {
+        if (classLoaders != null) {
+            return classLoaders.get(taskId);
+        } else {
+            return null;
+        }
+    }
 }

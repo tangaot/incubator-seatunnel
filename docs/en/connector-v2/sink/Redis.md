@@ -18,11 +18,14 @@ Used to write data to Redis.
 | port           | int    | yes                   | -             |
 | key            | string | yes                   | -             |
 | data_type      | string | yes                   | -             |
+| batch_size     | int    | no                    | 10            |
 | user           | string | no                    | -             |
 | auth           | string | no                    | -             |
+| db_num         | int    | no                    | 0             |
 | mode           | string | no                    | single        |
 | nodes          | list   | yes when mode=cluster | -             |
 | format         | string | no                    | json          |
+| expire         | long   | no                    | -1            |
 | common-options |        | no                    | -             |
 
 ### host [string]
@@ -81,6 +84,10 @@ Redis data types, support `key` `hash` `list` `set` `zset`
 - zset
 
 > Each data from upstream will be added to the configured zset key with a weight of 1. So the order of data in zset is based on the order of data consumption.
+>
+  ### batch_size [int]
+
+ensure the batch write size in single-machine mode; no guarantees in cluster mode.
 
 ### user [string]
 
@@ -90,6 +97,10 @@ redis authentication user, you need it when you connect to an encrypted cluster
 
 Redis authentication password, you need it when you connect to an encrypted cluster
 
+### db_num [int]
+
+Redis database index ID. It is connected to db 0 by default
+
 ### mode [string]
 
 redis mode, `single` or `cluster`, default is `single`
@@ -98,7 +109,7 @@ redis mode, `single` or `cluster`, default is `single`
 
 redis nodes information, used in cluster mode, must like as the following format:
 
-[host1:port1, host2:port2]
+["host1:port1", "host2:port2"]
 
 ### format [string]
 
@@ -120,9 +131,13 @@ Connector will generate data as the following and write it to redis:
 
 ```
 
+### expire [long]
+
+Set redis expiration time, the unit is second. The default value is -1, keys do not automatically expire by default.
+
 ### common options
 
-Sink plugin common parameters, please refer to [Sink Common Options](common-options.md) for details
+Sink plugin common parameters, please refer to [Sink Common Options](../sink-common-options.md) for details
 
 ## Example
 
@@ -145,5 +160,5 @@ Redis {
 
 ### next version
 
-- [Improve] Support redis cluster mode connection and user authentication [3188](https://github.com/apache/incubator-seatunnel/pull/3188)
+- [Improve] Support redis cluster mode connection and user authentication [3188](https://github.com/apache/seatunnel/pull/3188)
 

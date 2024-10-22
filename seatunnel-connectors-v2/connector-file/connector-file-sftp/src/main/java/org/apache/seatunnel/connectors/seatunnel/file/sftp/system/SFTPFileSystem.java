@@ -208,7 +208,6 @@ public class SFTPFileSystem extends FileSystem {
         return fileStat;
     }
 
-    @SuppressWarnings("checkstyle:MagicNumber")
     private FileStatus getFileStatus(ChannelSftp channel, LsEntry sftpFile, Path parentPath)
             throws IOException {
 
@@ -593,7 +592,6 @@ public class SFTPFileSystem extends FileSystem {
             try {
                 disconnect(channel);
             } catch (IOException ioe) {
-                return null;
             }
         }
     }
@@ -618,5 +616,11 @@ public class SFTPFileSystem extends FileSystem {
         } finally {
             disconnect(channel);
         }
+    }
+
+    @Override
+    public void close() throws IOException {
+        super.close();
+        connectionPool.shutdown();
     }
 }

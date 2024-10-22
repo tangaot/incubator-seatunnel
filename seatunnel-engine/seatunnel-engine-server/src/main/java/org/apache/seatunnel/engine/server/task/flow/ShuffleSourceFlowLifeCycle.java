@@ -20,11 +20,13 @@ package org.apache.seatunnel.engine.server.task.flow;
 import org.apache.seatunnel.api.table.type.Record;
 import org.apache.seatunnel.api.transform.Collector;
 import org.apache.seatunnel.engine.core.dag.actions.ShuffleAction;
+import org.apache.seatunnel.engine.server.checkpoint.ActionStateKey;
 import org.apache.seatunnel.engine.server.task.SeaTunnelTask;
 import org.apache.seatunnel.engine.server.task.record.Barrier;
 
 import com.hazelcast.collection.IQueue;
 import com.hazelcast.core.HazelcastInstance;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -34,13 +36,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+@Slf4j
 @SuppressWarnings("MagicNumber")
 public class ShuffleSourceFlowLifeCycle<T> extends AbstractFlowLifeCycle
         implements OneOutputFlowLifeCycle<Record<?>> {
     private final ShuffleAction shuffleAction;
     private final int shuffleBatchSize;
     private final IQueue<Record<?>>[] shuffles;
-    private List<Record<?>> unsentBuffer;
+    private Map<Integer, List<Record<?>>> unsentBufferMap = new HashMap<>();
     private final Map<Integer, Barrier> alignedBarriers = new HashMap<>();
     private long currentCheckpointId = Long.MAX_VALUE;
     private int alignedBarriersCounter = 0;
@@ -68,6 +71,8 @@ public class ShuffleSourceFlowLifeCycle<T> extends AbstractFlowLifeCycle
 
         for (int i = 0; i < shuffles.length; i++) {
             IQueue<Record<?>> shuffleQueue = shuffles[i];
+            List<Record<?>> unsentBuffer =
+                    unsentBufferMap.computeIfAbsent(i, k -> new LinkedList<>());
             if (shuffleQueue.size() == 0) {
                 emptyShuffleQueueCount++;
                 continue;
@@ -81,9 +86,9 @@ public class ShuffleSourceFlowLifeCycle<T> extends AbstractFlowLifeCycle
             List<Record<?>> shuffleBatch = new LinkedList<>();
             if (alignedBarriersCounter > 0) {
                 shuffleBatch.add(shuffleQueue.take());
-            } else if (unsentBuffer != null && !unsentBuffer.isEmpty()) {
-                shuffleBatch = unsentBuffer;
-                unsentBuffer = null;
+            } else if (!unsentBuffer.isEmpty()) {
+                shuffleBatch.addAll(unsentBuffer);
+                unsentBuffer.clear();
             }
 
             shuffleQueue.drainTo(shuffleBatch, shuffleBatchSize);
@@ -91,6 +96,8 @@ public class ShuffleSourceFlowLifeCycle<T> extends AbstractFlowLifeCycle
             for (int recordIndex = 0; recordIndex < shuffleBatch.size(); recordIndex++) {
                 Record<?> record = shuffleBatch.get(recordIndex);
                 if (record.getData() instanceof Barrier) {
+                    long startTime = System.currentTimeMillis();
+
                     Barrier barrier = (Barrier) record.getData();
 
                     // mark queue barrier
@@ -100,25 +107,31 @@ public class ShuffleSourceFlowLifeCycle<T> extends AbstractFlowLifeCycle
 
                     // publish barrier
                     if (alignedBarriersCounter == shuffles.length) {
-                        if (barrier.prepareClose()) {
+                        if (barrier.prepareClose(runningTask.getTaskLocation())) {
                             prepareClose = true;
                         }
                         if (barrier.snapshot()) {
                             runningTask.addState(
-                                    barrier, shuffleAction.getId(), Collections.emptyList());
+                                    barrier,
+                                    ActionStateKey.of(shuffleAction),
+                                    Collections.emptyList());
                         }
                         runningTask.ack(barrier);
 
                         collector.collect(record);
+                        log.debug(
+                                "trigger barrier [{}] finished, cost: {}ms. taskLocation: [{}]",
+                                barrier.getId(),
+                                System.currentTimeMillis() - startTime,
+                                runningTask.getTaskLocation());
 
                         alignedBarriersCounter = 0;
                         alignedBarriers.clear();
                     }
 
                     if (recordIndex + 1 < shuffleBatch.size()) {
-                        unsentBuffer =
-                                new LinkedList<>(
-                                        shuffleBatch.subList(recordIndex + 1, shuffleBatch.size()));
+                        unsentBuffer.addAll(
+                                shuffleBatch.subList(recordIndex + 1, shuffleBatch.size()));
                     }
                     break;
                 } else {
@@ -139,6 +152,7 @@ public class ShuffleSourceFlowLifeCycle<T> extends AbstractFlowLifeCycle
     public void close() throws IOException {
         super.close();
         for (IQueue<Record<?>> shuffleQueue : shuffles) {
+            log.info("destroy shuffle queue: {}", shuffleQueue.getName());
             shuffleQueue.destroy();
         }
     }

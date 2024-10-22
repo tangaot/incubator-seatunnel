@@ -9,6 +9,7 @@ Write data to InfluxDB.
 ## Key features
 
 - [ ] [exactly-once](../../concept/connector-v2-features.md)
+- [x] [support multiple table write](../../concept/connector-v2-features.md)
 
 ## Options
 
@@ -22,7 +23,6 @@ Write data to InfluxDB.
 | key_time                    | string | no       | processing time              |
 | key_tags                    | array  | no       | exclude `field` & `key_time` |
 | batch_size                  | int    | no       | 1024                         |
-| batch_interval_ms           | int    | no       | -                            |
 | max_retries                 | int    | no       | -                            |
 | retry_backoff_multiplier_ms | int    | no       | -                            |
 | connect_timeout_ms          | long   | no       | 15000                        |
@@ -63,11 +63,7 @@ If not specified, include all fields with `influxDB` measurement field
 
 ### batch_size [int]
 
-For batch writing, when the number of buffers reaches the number of `batch_size` or the time reaches `batch_interval_ms`, the data will be flushed into the influxDB
-
-### batch_interval_ms [int]
-
-For batch writing, when the number of buffers reaches the number of `batch_size` or the time reaches `batch_interval_ms`, the data will be flushed into the influxDB
+For batch writing, when the number of buffers reaches the number of `batch_size` or the time reaches `checkpoint.interval`, the data will be flushed into the influxDB
 
 ### max_retries [int]
 
@@ -87,7 +83,7 @@ the timeout for connecting to InfluxDB, in milliseconds
 
 ### common options
 
-Sink plugin common parameters, please refer to [Sink Common Options](common-options.md) for details
+Sink plugin common parameters, please refer to [Sink Common Options](../sink-common-options.md) for details
 
 ## Examples
 
@@ -103,6 +99,39 @@ sink {
     }
 }
 
+```
+
+### Multiple table
+
+#### example1
+
+```hocon
+env {
+  parallelism = 1
+  job.mode = "STREAMING"
+  checkpoint.interval = 5000
+}
+
+source {
+  Mysql-CDC {
+    base-url = "jdbc:mysql://127.0.0.1:3306/seatunnel"
+    username = "root"
+    password = "******"
+    
+    table-names = ["seatunnel.role","seatunnel.user","galileo.Bucket"]
+  }
+}
+
+transform {
+}
+
+sink {
+  InfluxDB {
+    url = "http://influxdb-host:8086"
+    database = "test"
+    measurement = "${table_name}_test"
+  }
+}
 ```
 
 ## Changelog

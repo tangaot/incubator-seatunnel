@@ -29,16 +29,17 @@ import org.apache.seatunnel.connectors.seatunnel.cdc.mysql.source.reader.fetch.b
 import io.debezium.config.Configuration;
 import io.debezium.connector.mysql.MySqlConnectorConfig;
 import io.debezium.connector.mysql.MySqlOffsetContext;
+import io.debezium.connector.mysql.MySqlPartition;
 import io.debezium.heartbeat.Heartbeat;
 import io.debezium.pipeline.source.spi.ChangeEventSource;
 import io.debezium.pipeline.spi.SnapshotResult;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Map;
 
-import static org.apache.seatunnel.connectors.seatunnel.cdc.mysql.utils.MySqlConnectionUtils.createMySqlConnection;
-
+@Slf4j
 public class MySqlSnapshotFetchTask implements FetchTask<SourceSplitBase> {
 
     private final SnapshotSplit split;
@@ -66,37 +67,54 @@ public class MySqlSnapshotFetchTask implements FetchTask<SourceSplitBase> {
                         split);
         SnapshotSplitChangeEventSourceContext changeEventSourceContext =
                 new SnapshotSplitChangeEventSourceContext();
-        SnapshotResult snapshotResult =
+        SnapshotResult<MySqlOffsetContext> snapshotResult =
                 snapshotSplitReadTask.execute(
-                        changeEventSourceContext, sourceFetchContext.getOffsetContext());
+                        changeEventSourceContext,
+                        sourceFetchContext.getPartition(),
+                        sourceFetchContext.getOffsetContext());
+        if (!snapshotResult.isCompletedOrSkipped()) {
+            taskRunning = false;
+            throw new IllegalStateException(
+                    String.format("Read snapshot for split %s fail", split));
+        }
 
-        final IncrementalSplit backfillBinlogSplit =
-                createBackfillBinlogSplit(changeEventSourceContext);
+        boolean changed =
+                changeEventSourceContext
+                        .getHighWatermark()
+                        .isAfter(changeEventSourceContext.getLowWatermark());
+        if (!sourceFetchContext.isExactlyOnce()) {
+            taskRunning = false;
+            if (changed) {
+                log.debug("Skip merge changelog(exactly-once) for snapshot split {}", split);
+            }
+            return;
+        }
 
+        final IncrementalSplit backfillSplit = createBackfillBinlogSplit(changeEventSourceContext);
         // optimization that skip the binlog read when the low watermark equals high
         // watermark
-        final boolean binlogBackfillRequired =
-                backfillBinlogSplit.getStopOffset().isAfter(backfillBinlogSplit.getStartupOffset());
-        if (!binlogBackfillRequired) {
+        if (!changed) {
             dispatchBinlogEndEvent(
-                    backfillBinlogSplit,
-                    ((MySqlSourceFetchTaskContext) context).getOffsetContext().getPartition(),
-                    ((MySqlSourceFetchTaskContext) context).getDispatcher());
+                    backfillSplit,
+                    sourceFetchContext.getPartition().getSourcePartition(),
+                    sourceFetchContext.getDispatcher());
             taskRunning = false;
             return;
         }
-        // execute binlog read task
-        if (snapshotResult.isCompletedOrSkipped()) {
-            final MySqlBinlogFetchTask.MySqlBinlogSplitReadTask backfillBinlogReadTask =
-                    createBackfillBinlogReadTask(backfillBinlogSplit, sourceFetchContext);
-            backfillBinlogReadTask.execute(
-                    new SnapshotBinlogSplitChangeEventSourceContext(),
-                    sourceFetchContext.getOffsetContext());
-        } else {
-            taskRunning = false;
-            throw new IllegalStateException(
-                    String.format("Read snapshot for mysql split %s fail", split));
-        }
+
+        final MySqlBinlogFetchTask.MySqlBinlogSplitReadTask backfillReadTask =
+                createBackfillBinlogReadTask(backfillSplit, sourceFetchContext);
+        log.info(
+                "start execute backfillReadTask, start offset : {}, stop offset : {}",
+                backfillSplit.getStartupOffset(),
+                backfillSplit.getStopOffset());
+        backfillReadTask.execute(
+                new SnapshotBinlogSplitChangeEventSourceContext(),
+                sourceFetchContext.getPartition(),
+                sourceFetchContext.getOffsetContext());
+        log.info("backfillReadTask execute end");
+
+        taskRunning = false;
     }
 
     private IncrementalSplit createBackfillBinlogSplit(
@@ -112,7 +130,7 @@ public class MySqlSnapshotFetchTask implements FetchTask<SourceSplitBase> {
     private void dispatchBinlogEndEvent(
             IncrementalSplit backFillBinlogSplit,
             Map<String, ?> sourcePartition,
-            JdbcSourceEventDispatcher eventDispatcher)
+            JdbcSourceEventDispatcher<MySqlPartition> eventDispatcher)
             throws InterruptedException {
         eventDispatcher.dispatchWatermarkEvent(
                 sourcePartition,
@@ -142,7 +160,7 @@ public class MySqlSnapshotFetchTask implements FetchTask<SourceSplitBase> {
         return new MySqlBinlogFetchTask.MySqlBinlogSplitReadTask(
                 new MySqlConnectorConfig(dezConf),
                 mySqlOffsetContext,
-                createMySqlConnection(context.getSourceConfig().getDbzConfiguration()),
+                context.getConnection(),
                 context.getDispatcher(),
                 context.getErrorHandler(),
                 context.getTaskContext(),
@@ -153,6 +171,11 @@ public class MySqlSnapshotFetchTask implements FetchTask<SourceSplitBase> {
     @Override
     public boolean isRunning() {
         return taskRunning;
+    }
+
+    @Override
+    public void shutdown() {
+        taskRunning = false;
     }
 
     @Override

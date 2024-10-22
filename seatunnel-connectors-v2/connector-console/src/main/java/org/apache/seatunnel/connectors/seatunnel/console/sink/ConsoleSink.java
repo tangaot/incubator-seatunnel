@@ -17,41 +17,36 @@
 
 package org.apache.seatunnel.connectors.seatunnel.console.sink;
 
-import org.apache.seatunnel.shade.com.typesafe.config.Config;
-
-import org.apache.seatunnel.api.sink.SeaTunnelSink;
+import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.sink.SinkWriter;
-import org.apache.seatunnel.api.table.type.SeaTunnelDataType;
+import org.apache.seatunnel.api.sink.SupportMultiTableSink;
+import org.apache.seatunnel.api.table.catalog.CatalogTable;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 import org.apache.seatunnel.connectors.seatunnel.common.sink.AbstractSimpleSink;
-import org.apache.seatunnel.connectors.seatunnel.common.sink.AbstractSinkWriter;
 
-import com.google.auto.service.AutoService;
-import lombok.NoArgsConstructor;
+import java.util.Optional;
 
-@NoArgsConstructor
-@AutoService(SeaTunnelSink.class)
-public class ConsoleSink extends AbstractSimpleSink<SeaTunnelRow, Void> {
-    private SeaTunnelRowType seaTunnelRowType;
+import static org.apache.seatunnel.connectors.seatunnel.console.sink.ConsoleSinkFactory.LOG_PRINT_DATA;
+import static org.apache.seatunnel.connectors.seatunnel.console.sink.ConsoleSinkFactory.LOG_PRINT_DELAY;
 
-    public ConsoleSink(SeaTunnelRowType seaTunnelRowType) {
-        this.seaTunnelRowType = seaTunnelRowType;
+public class ConsoleSink extends AbstractSimpleSink<SeaTunnelRow, Void>
+        implements SupportMultiTableSink {
+    private final SeaTunnelRowType seaTunnelRowType;
+    private final boolean isPrintData;
+    private final int delayMs;
+    private final CatalogTable catalogTable;
+
+    public ConsoleSink(CatalogTable catalogTable, ReadonlyConfig options) {
+        this.catalogTable = catalogTable;
+        this.isPrintData = options.get(LOG_PRINT_DATA);
+        this.delayMs = options.get(LOG_PRINT_DELAY);
+        this.seaTunnelRowType = catalogTable.getTableSchema().toPhysicalRowDataType();
     }
 
     @Override
-    public void setTypeInfo(SeaTunnelRowType seaTunnelRowType) {
-        this.seaTunnelRowType = seaTunnelRowType;
-    }
-
-    @Override
-    public SeaTunnelDataType<SeaTunnelRow> getConsumedType() {
-        return this.seaTunnelRowType;
-    }
-
-    @Override
-    public AbstractSinkWriter<SeaTunnelRow, Void> createWriter(SinkWriter.Context context) {
-        return new ConsoleSinkWriter(seaTunnelRowType, context);
+    public ConsoleSinkWriter createWriter(SinkWriter.Context context) {
+        return new ConsoleSinkWriter(seaTunnelRowType, context, isPrintData, delayMs);
     }
 
     @Override
@@ -60,5 +55,7 @@ public class ConsoleSink extends AbstractSimpleSink<SeaTunnelRow, Void> {
     }
 
     @Override
-    public void prepare(Config pluginConfig) {}
+    public Optional<CatalogTable> getWriteCatalogTable() {
+        return Optional.ofNullable(catalogTable);
+    }
 }

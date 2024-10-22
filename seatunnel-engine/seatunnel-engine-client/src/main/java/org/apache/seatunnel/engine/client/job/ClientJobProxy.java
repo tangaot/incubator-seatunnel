@@ -22,6 +22,7 @@ import org.apache.seatunnel.common.utils.RetryUtils;
 import org.apache.seatunnel.engine.client.SeaTunnelHazelcastClient;
 import org.apache.seatunnel.engine.common.Constant;
 import org.apache.seatunnel.engine.common.exception.SeaTunnelEngineException;
+import org.apache.seatunnel.engine.common.utils.ExceptionUtil;
 import org.apache.seatunnel.engine.common.utils.PassiveCompletableFuture;
 import org.apache.seatunnel.engine.core.job.Job;
 import org.apache.seatunnel.engine.core.job.JobImmutableInformation;
@@ -32,10 +33,7 @@ import org.apache.seatunnel.engine.core.protocol.codec.SeaTunnelGetJobStatusCode
 import org.apache.seatunnel.engine.core.protocol.codec.SeaTunnelSubmitJobCodec;
 import org.apache.seatunnel.engine.core.protocol.codec.SeaTunnelWaitForJobCompleteCodec;
 
-import org.apache.commons.lang3.StringUtils;
-
 import com.hazelcast.client.impl.protocol.ClientMessage;
-import com.hazelcast.core.OperationTimeoutException;
 import com.hazelcast.logging.ILogger;
 import com.hazelcast.logging.Logger;
 import lombok.NonNull;
@@ -67,7 +65,7 @@ public class ClientJobProxy implements Job {
     private void submitJob(JobImmutableInformation jobImmutableInformation) {
         LOGGER.info(
                 String.format(
-                        "start submit job, job id: %s, with plugin jar %s",
+                        "Start submit job, job id: %s, with plugin jar %s",
                         jobImmutableInformation.getJobId(),
                         jobImmutableInformation.getPluginJarsUrls()));
         ClientMessage request =
@@ -75,10 +73,15 @@ public class ClientJobProxy implements Job {
                         jobImmutableInformation.getJobId(),
                         seaTunnelHazelcastClient
                                 .getSerializationService()
-                                .toData(jobImmutableInformation));
+                                .toData(jobImmutableInformation),
+                        jobImmutableInformation.isStartWithSavePoint());
         PassiveCompletableFuture<Void> submitJobFuture =
                 seaTunnelHazelcastClient.requestOnMasterAndGetCompletableFuture(request);
         submitJobFuture.join();
+        LOGGER.info(
+                String.format(
+                        "Submit job finished, job id: %s, job name: %s",
+                        jobImmutableInformation.getJobId(), jobImmutableInformation.getJobName()));
     }
 
     /**
@@ -87,7 +90,7 @@ public class ClientJobProxy implements Job {
      * @return The job final status
      */
     @Override
-    public JobStatus waitForJobComplete() {
+    public JobResult waitForJobCompleteV2() {
         try {
             jobResult =
                     RetryUtils.retryWithException(
@@ -99,26 +102,20 @@ public class ClientJobProxy implements Job {
                             new RetryUtils.RetryMaterial(
                                     100000,
                                     true,
-                                    exception ->
-                                            exception.getCause()
-                                                    instanceof OperationTimeoutException,
+                                    ExceptionUtil::isOperationNeedRetryException,
                                     Constant.OPERATION_RETRY_SLEEP));
             if (jobResult == null) {
                 throw new SeaTunnelEngineException("failed to fetch job result");
             }
         } catch (Exception e) {
-            LOGGER.info(
+            LOGGER.severe(
                     String.format(
                             "Job (%s) end with unknown state, and throw Exception: %s",
                             jobId, ExceptionUtils.getMessage(e)));
             throw new RuntimeException(e);
         }
         LOGGER.info(String.format("Job (%s) end with state %s", jobId, jobResult.getStatus()));
-        if (StringUtils.isNotEmpty(jobResult.getError())
-                || jobResult.getStatus().equals(JobStatus.FAILED)) {
-            throw new SeaTunnelEngineException(jobResult.getError());
-        }
-        return jobResult.getStatus();
+        return jobResult;
     }
 
     public JobResult getJobResultCache() {

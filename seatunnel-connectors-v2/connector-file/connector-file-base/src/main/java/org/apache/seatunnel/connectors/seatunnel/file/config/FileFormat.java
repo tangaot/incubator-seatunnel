@@ -18,18 +18,25 @@
 package org.apache.seatunnel.connectors.seatunnel.file.config;
 
 import org.apache.seatunnel.connectors.seatunnel.file.sink.config.FileSinkConfig;
+import org.apache.seatunnel.connectors.seatunnel.file.sink.writer.BinaryWriteStrategy;
+import org.apache.seatunnel.connectors.seatunnel.file.sink.writer.ExcelWriteStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.sink.writer.JsonWriteStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.sink.writer.OrcWriteStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.sink.writer.ParquetWriteStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.sink.writer.TextWriteStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.sink.writer.WriteStrategy;
+import org.apache.seatunnel.connectors.seatunnel.file.sink.writer.XmlWriteStrategy;
+import org.apache.seatunnel.connectors.seatunnel.file.source.reader.BinaryReadStrategy;
+import org.apache.seatunnel.connectors.seatunnel.file.source.reader.ExcelReadStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.source.reader.JsonReadStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.source.reader.OrcReadStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.source.reader.ParquetReadStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.source.reader.ReadStrategy;
 import org.apache.seatunnel.connectors.seatunnel.file.source.reader.TextReadStrategy;
+import org.apache.seatunnel.connectors.seatunnel.file.source.reader.XmlReadStrategy;
 
 import java.io.Serializable;
+import java.util.Arrays;
 
 public enum FileFormat implements Serializable {
     CSV("csv") {
@@ -87,16 +94,56 @@ public enum FileFormat implements Serializable {
         public ReadStrategy getReadStrategy() {
             return new JsonReadStrategy();
         }
+    },
+    EXCEL("xlsx", "xls") {
+        @Override
+        public WriteStrategy getWriteStrategy(FileSinkConfig fileSinkConfig) {
+            return new ExcelWriteStrategy(fileSinkConfig);
+        }
+
+        @Override
+        public ReadStrategy getReadStrategy() {
+            return new ExcelReadStrategy();
+        }
+    },
+    XML("xml") {
+        @Override
+        public WriteStrategy getWriteStrategy(FileSinkConfig fileSinkConfig) {
+            return new XmlWriteStrategy(fileSinkConfig);
+        }
+
+        @Override
+        public ReadStrategy getReadStrategy() {
+            return new XmlReadStrategy();
+        }
+    },
+    BINARY("") {
+        @Override
+        public WriteStrategy getWriteStrategy(FileSinkConfig fileSinkConfig) {
+            return new BinaryWriteStrategy(fileSinkConfig);
+        }
+
+        @Override
+        public ReadStrategy getReadStrategy() {
+            return new BinaryReadStrategy();
+        }
     };
 
-    private final String suffix;
+    private final String[] suffix;
 
-    FileFormat(String suffix) {
+    FileFormat(String... suffix) {
         this.suffix = suffix;
     }
 
     public String getSuffix() {
-        return "." + suffix;
+        if (suffix.length > 0) {
+            return "." + suffix[0];
+        }
+        return "";
+    }
+
+    public String[] getAllSuffix() {
+        return Arrays.stream(suffix).map(suffix -> "." + suffix).toArray(String[]::new);
     }
 
     public ReadStrategy getReadStrategy() {

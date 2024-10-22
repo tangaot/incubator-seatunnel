@@ -50,7 +50,7 @@ import java.util.stream.Stream;
 
 @Slf4j
 public class ClickhouseSinkCDCChangelogIT extends TestSuiteBase implements TestResource {
-    private static final String CLICKHOUSE_DOCKER_IMAGE = "clickhouse/clickhouse-server:latest";
+    private static final String CLICKHOUSE_DOCKER_IMAGE = "clickhouse/clickhouse-server:23.3.13.6";
     private static final String HOST = "clickhouse";
     private static final String DRIVER_CLASS = "com.clickhouse.jdbc.ClickHouseDriver";
     private static final String DATABASE = "default";
@@ -189,10 +189,10 @@ public class ClickhouseSinkCDCChangelogIT extends TestSuiteBase implements TestR
 
     private void checkSinkTableRows() throws SQLException {
         Set<List<Object>> actual = new HashSet<>();
-        try (Statement statement = connection.createStatement()) {
-            ResultSet resultSet =
-                    statement.executeQuery(
-                            String.format("select * from %s.%s", DATABASE, SINK_TABLE));
+        try (Statement statement = connection.createStatement();
+                ResultSet resultSet =
+                        statement.executeQuery(
+                                String.format("select * from %s.%s", DATABASE, SINK_TABLE))) {
             while (resultSet.next()) {
                 List<Object> row =
                         Arrays.asList(

@@ -124,7 +124,7 @@ We supported as the following file types:
 
 `text` `csv` `parquet` `orc` `json`
 
-Please note that, The final file name will end with the file_format's suffix, the suffix of the text file is `txt`.
+Please note that, The final file name will end with the file_format_type's suffix, the suffix of the text file is `txt`.
 
 ### filename_time_format [string]
 
@@ -184,7 +184,7 @@ The maximum number of rows in a file. For SeaTunnel Engine, the number of lines 
 
 ### common options
 
-Sink plugin common parameters, please refer to [Sink Common Options](common-options.md) for details.
+Sink plugin common parameters, please refer to [Sink Common Options](../sink-common-options.md) for details.
 
 ## Example
 
